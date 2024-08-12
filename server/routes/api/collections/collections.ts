@@ -880,9 +880,12 @@ router.post(
     const { id } = ctx.input.body;
     const { user } = ctx.state.auth;
 
-    const collection = await Collection.scope({
-      method: ["withMembership", user.id],
-    }).findByPk(id, {
+    const collection = await Collection.scope([
+      {
+        method: ["withMembership", user.id],
+      },
+      "withArchivedBy",
+    ]).findByPk(id, {
       transaction,
     });
 
@@ -893,7 +896,9 @@ router.post(
     authorize(user, "archive", collection);
 
     collection.archivedAt = new Date();
+    collection.archivedById = user.id;
     await collection.save({ transaction });
+    await collection.reload({ transaction });
 
     // Archive all documents within the collection
     await Document.update(
@@ -913,13 +918,17 @@ router.post(
       }
     );
 
-    await Event.createFromContext(ctx, {
-      name: "collections.archive",
-      collectionId: collection.id,
-      data: {
-        name: collection.name,
+    await Event.createFromContext(
+      ctx,
+      {
+        name: "collections.archive",
+        collectionId: collection.id,
+        data: {
+          name: collection.name,
+        },
       },
-    });
+      { transaction }
+    );
 
     ctx.body = {
       data: await presentCollection(ctx, collection),
@@ -967,17 +976,21 @@ router.post(
       }
     );
 
-    // update collection archivedAt
     collection.archivedAt = null;
+    collection.archivedById = null;
     await collection.save({ transaction });
 
-    await Event.createFromContext(ctx, {
-      name: "collections.restore",
-      collectionId: collection.id,
-      data: {
-        name: collection.name,
+    await Event.createFromContext(
+      ctx,
+      {
+        name: "collections.restore",
+        collectionId: collection.id,
+        data: {
+          name: collection.name,
+        },
       },
-    });
+      { transaction }
+    );
 
     ctx.body = {
       data: await presentCollection(ctx, collection!),
@@ -996,7 +1009,7 @@ router.post(
     const { user } = ctx.state.auth;
     const collectionIds = await user.collectionIds({ transaction });
     const [collections, total] = await Promise.all([
-      Collection.findAll({
+      Collection.scope("withArchivedBy").findAll({
         where: {
           teamId: user.teamId,
           id: collectionIds,
