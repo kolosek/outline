@@ -28,7 +28,7 @@ function ResolvedCollectionIcon({
 }: Props) {
   const { ui } = useStores();
 
-  if (collection.private) {
+  if (collection.isPrivate) {
     return (
       <PrivateCollectionIcon color={color} expanded={expanded} size={size} />
     );
