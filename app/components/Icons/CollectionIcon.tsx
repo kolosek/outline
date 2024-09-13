@@ -28,24 +28,18 @@ function ResolvedCollectionIcon({
 }: Props) {
   const { ui } = useStores();
 
-  if (collection.private) {
-    return (
-      <PrivateCollectionIcon color={color} expanded={expanded} size={size} />
-    );
-  }
+  // If the chosen icon color is very dark then we invert it in dark mode
+  // otherwise it will be impossible to see against the dark background.
+  const collectionColor = collection.color ?? colorPalette[0];
+  const color =
+    inputColor ||
+    (ui.resolvedTheme === "dark" && collectionColor !== "currentColor"
+      ? getLuminance(collectionColor) > 0.09
+        ? collectionColor
+        : "currentColor"
+      : collectionColor);
 
   if (!collection.icon || collection.icon === "collection") {
-    // If the chosen icon color is very dark then we invert it in dark mode
-    // otherwise it will be impossible to see against the dark background.
-    const collectionColor = collection.color ?? colorPalette[0];
-    const color =
-      inputColor ||
-      (ui.resolvedTheme === "dark" && collectionColor !== "currentColor"
-        ? getLuminance(collectionColor) > 0.09
-          ? collectionColor
-          : "currentColor"
-        : collectionColor);
-
     return (
       <CollectionIcon
         color={color}
@@ -53,6 +47,12 @@ function ResolvedCollectionIcon({
         size={size}
         className={className}
       />
+    );
+  }
+
+  if (collection.isPrivate) {
+    return (
+      <PrivateCollectionIcon color={color} expanded={expanded} size={size} />
     );
   }
 
