@@ -1,5 +1,5 @@
 import { observer } from "mobx-react";
-import { CollectionIcon, PrivateCollectionIcon } from "outline-icons";
+import { PrivateCollectionIcon, CollectionIcon } from "outline-icons";
 import { getLuminance } from "polished";
 import * as React from "react";
 import { colorPalette } from "@shared/utils/collections";
@@ -28,21 +28,18 @@ function ResolvedCollectionIcon({
 }: Props) {
   const { ui } = useStores();
 
-  if (!collection.icon || collection.icon === "collection") {
-    // If the chosen icon color is very dark then we invert it in dark mode
-    // otherwise it will be impossible to see against the dark background.
-    const collectionColor = collection.color ?? colorPalette[0];
-    const color =
-      inputColor ||
-      (ui.resolvedTheme === "dark" && collectionColor !== "currentColor"
-        ? getLuminance(collectionColor) > 0.09
-          ? collectionColor
-          : "currentColor"
-        : collectionColor);
+  // If the chosen icon color is very dark then we invert it in dark mode
+  // otherwise it will be impossible to see against the dark background.
+  const collectionColor = collection.color ?? colorPalette[0];
+  const color =
+    inputColor ||
+    (ui.resolvedTheme === "dark" && collectionColor !== "currentColor"
+      ? getLuminance(collectionColor) > 0.09
+        ? collectionColor
+        : "currentColor"
+      : collectionColor);
 
-    const Component = collection.isPrivate
-      ? PrivateCollectionIcon
-      : CollectionIcon;
+  if (!collection.icon || collection.icon === "collection") {
     return (
       <Component
         color={color}
@@ -50,6 +47,12 @@ function ResolvedCollectionIcon({
         size={size}
         className={className}
       />
+    );
+  }
+
+  if (collection.isPrivate) {
+    return (
+      <PrivateCollectionIcon color={color} expanded={expanded} size={size} />
     );
   }
 
