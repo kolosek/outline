@@ -23,7 +23,6 @@ import {
   BelongsTo,
   Column,
   Default,
-  PrimaryKey,
   Table,
   BeforeValidate,
   BeforeCreate,
@@ -39,6 +38,7 @@ import {
   IsDate,
   AllowNull,
   BelongsToMany,
+  Unique,
 } from "sequelize-typescript";
 import isUUID from "validator/lib/isUUID";
 import type {
@@ -64,7 +64,7 @@ import Team from "./Team";
 import User from "./User";
 import UserMembership from "./UserMembership";
 import View from "./View";
-import ParanoidModel from "./base/ParanoidModel";
+import ArchivableModel from "./base/ArchivableModel";
 import Fix from "./decorators/Fix";
 import { DocumentHelper } from "./helpers/DocumentHelper";
 import IsHexColor from "./validators/IsHexColor";
@@ -259,7 +259,7 @@ type AdditionalFindOptions = {
 }))
 @Table({ tableName: "documents", modelName: "document" })
 @Fix
-class Document extends ParanoidModel<
+class Document extends ArchivableModel<
   InferAttributes<Document>,
   Partial<InferCreationAttributes<Document>>
 > {
@@ -268,7 +268,7 @@ class Document extends ParanoidModel<
     max: 10,
     msg: `urlId must be 10 characters`,
   })
-  @PrimaryKey
+  @Unique
   @Column
   urlId: string;
 
@@ -361,11 +361,6 @@ class Document extends ParanoidModel<
   @Default(0)
   @Column(DataType.INTEGER)
   revisionCount: number;
-
-  /** Whether the document is archvied, and if so when. */
-  @IsDate
-  @Column
-  archivedAt: Date | null;
 
   /** Whether the document is published, and if so when. */
   @IsDate
@@ -807,15 +802,14 @@ class Document extends ParanoidModel<
    * @param options FindOptions
    * @returns A promise that resolve to a list of users
    */
-  collaborators = async (options?: FindOptions<User>): Promise<User[]> => {
-    const users = await Promise.all(
-      this.collaboratorIds.map((collaboratorId) =>
-        User.findByPk(collaboratorId, options)
-      )
-    );
-
-    return compact(users);
-  };
+  collaborators = async (options?: FindOptions<User>): Promise<User[]> =>
+    await User.findAll({
+      ...options,
+      where: {
+        ...options?.where,
+        id: this.collaboratorIds,
+      },
+    });
 
   /**
    * Find all of the child documents for this document
