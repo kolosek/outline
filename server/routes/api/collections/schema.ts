@@ -19,7 +19,7 @@ export const CollectionsCreateSchema = BaseSchema.extend({
       .regex(ValidateColor.regex, { message: ValidateColor.message })
       .nullish(),
     description: z.string().nullish(),
-    data: ProsemirrorSchema.nullish(),
+    data: ProsemirrorSchema({ allowEmpty: true }).nullish(),
     permission: z
       .nativeEnum(CollectionPermission)
       .nullish()
@@ -94,17 +94,6 @@ export type CollectionsRemoveGroupReq = z.infer<
   typeof CollectionsRemoveGroupSchema
 >;
 
-export const CollectionsGroupMembershipsSchema = BaseSchema.extend({
-  body: BaseIdSchema.extend({
-    query: z.string().optional(),
-    permission: z.nativeEnum(CollectionPermission).optional(),
-  }),
-});
-
-export type CollectionsGroupMembershipsReq = z.infer<
-  typeof CollectionsGroupMembershipsSchema
->;
-
 export const CollectionsAddUserSchema = BaseSchema.extend({
   body: BaseIdSchema.extend({
     userId: z.string().uuid(),
@@ -163,7 +152,7 @@ export const CollectionsUpdateSchema = BaseSchema.extend({
   body: BaseIdSchema.extend({
     name: z.string().optional(),
     description: z.string().nullish(),
-    data: ProsemirrorSchema.nullish(),
+    data: ProsemirrorSchema({ allowEmpty: true }).nullish(),
     icon: zodIconType().nullish(),
     permission: z.nativeEnum(CollectionPermission).nullish(),
     color: z

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/react";
 import invariant from "invariant";
+import isNil from "lodash/isNil";
 import { observable, action, computed, autorun, runInAction } from "mobx";
 import { getCookie, setCookie } from "tiny-cookie";
 import { CustomTheme } from "@shared/types";
@@ -119,7 +120,7 @@ export default class AuthStore extends Store<Team> {
         // If we're not signed in then hydrate from the received data, otherwise if
         // we are signed in and the received data contains no user then sign out
         if (this.authenticated) {
-          if (newData.user === null) {
+          if (isNil(newData.user)) {
             void this.logout(false, false);
           }
         } else {
@@ -141,6 +142,7 @@ export default class AuthStore extends Store<Team> {
       this.rootStore.users.add(data.user);
     }
 
+    this.currentTeamId = data.team?.id;
     this.currentUserId = data.user?.id;
     this.collaborationToken = data.collaborationToken;
     this.lastSignedIn = getCookie("lastSignedIn");
@@ -207,6 +209,8 @@ export default class AuthStore extends Store<Team> {
         this.addPolicies(res.policies);
         this.add(data.team);
         this.rootStore.users.add(data.user);
+        data.groups.map(this.rootStore.groups.add);
+        data.groupUsers.map(this.rootStore.groupUsers.add);
         this.currentUserId = data.user.id;
         this.currentTeamId = data.team.id;
 

@@ -41,7 +41,7 @@ function ResolvedCollectionIcon({
 
   if (!collection.icon || collection.icon === "collection") {
     return (
-      <CollectionIcon
+      <Component
         color={color}
         expanded={expanded}
         size={size}
