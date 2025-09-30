@@ -1,5 +1,11 @@
-import { Fragment, Node, NodeType } from "prosemirror-model";
-import { Command, EditorState, TextSelection } from "prosemirror-state";
+import { GapCursor } from "prosemirror-gapcursor";
+import { Node, NodeType, Slice } from "prosemirror-model";
+import {
+  Command,
+  EditorState,
+  TextSelection,
+  Transaction,
+} from "prosemirror-state";
 import {
   CellSelection,
   addRow,
@@ -10,23 +16,38 @@ import {
   addColumn,
   deleteRow,
   deleteColumn,
+  deleteTable,
+  mergeCells,
+  splitCell,
 } from "prosemirror-tables";
+import { ProsemirrorHelper } from "../../utils/ProsemirrorHelper";
+import { CSVHelper } from "../../utils/csv";
 import { chainTransactions } from "../lib/chainTransactions";
-import { getCellsInColumn, isHeaderEnabled } from "../queries/table";
+import {
+  getCellsInColumn,
+  getCellsInRow,
+  isHeaderEnabled,
+  isTableSelected,
+} from "../queries/table";
 import { TableLayout } from "../types";
 import { collapseSelection } from "./collapseSelection";
 
 export function createTable({
   rowsCount,
   colsCount,
+  colWidth,
 }: {
+  /** The number of rows in the table. */
   rowsCount: number;
+  /** The number of columns in the table. */
   colsCount: number;
+  /** The widths of each column in the table. */
+  colWidth: number;
 }): Command {
   return (state, dispatch) => {
     if (dispatch) {
       const offset = state.tr.selection.anchor + 1;
-      const nodes = createTableInner(state, rowsCount, colsCount);
+      const nodes = createTableInner(state, rowsCount, colsCount, colWidth);
       const tr = state.tr.replaceSelectionWith(nodes).scrollIntoView();
       const resolvedPos = tr.doc.resolve(offset);
       tr.setSelection(TextSelection.near(resolvedPos));
@@ -36,10 +57,11 @@ export function createTable({
   };
 }
 
-function createTableInner(
+export function createTableInner(
   state: EditorState,
   rowsCount: number,
   colsCount: number,
+  colWidth?: number,
   withHeaderRow = true,
   cellContent?: Node
 ) {
@@ -48,23 +70,28 @@ function createTableInner(
   const cells: Node[] = [];
   const rows: Node[] = [];
 
-  const createCell = (
-    cellType: NodeType,
-    cellContent: Fragment | Node | readonly Node[] | null | undefined
-  ) =>
+  const createCell = (cellType: NodeType, attrs: Record<string, any> | null) =>
     cellContent
-      ? cellType.createChecked(null, cellContent)
-      : cellType.createAndFill();
+      ? cellType.createChecked(attrs, cellContent)
+      : cellType.createAndFill(attrs);
 
   for (let index = 0; index < colsCount; index += 1) {
-    const cell = createCell(types.cell, cellContent);
+    const attrs =
+      colWidth && index < colsCount - 1
+        ? {
+            colwidth: [colWidth],
+            colspan: 1,
+            rowspan: 1,
+          }
+        : null;
+    const cell = createCell(types.cell, attrs);
 
     if (cell) {
       cells.push(cell);
     }
 
     if (withHeaderRow) {
-      const headerCell = createCell(types.header_cell, cellContent);
+      const headerCell = createCell(types.header_cell, attrs);
 
       if (headerCell) {
         headerCells.push(headerCell);
@@ -82,6 +109,67 @@ function createTableInner(
   }
 
   return types.table.createChecked(null, rows);
+}
+
+export function exportTable({
+  fileName,
+}: {
+  format: string;
+  fileName: string;
+}): Command {
+  return (state, dispatch) => {
+    if (!isInTable(state)) {
+      return false;
+    }
+
+    if (dispatch) {
+      const rect = selectedRect(state);
+      const table: Node[][] = [];
+
+      for (let r = 0; r < rect.map.height; r++) {
+        const cells = [];
+        for (let c = 0; c < rect.map.width; c++) {
+          const cell = state.doc.nodeAt(
+            rect.tableStart + rect.map.map[r * rect.map.width + c]
+          );
+          if (cell) {
+            cells.push(cell);
+          }
+        }
+        table.push(cells);
+      }
+
+      const csv = table
+        .map((row) =>
+          row
+            .map((cell) => {
+              let value = ProsemirrorHelper.toPlainText(cell);
+
+              // Escape double quotes by doubling them
+              if (value.includes('"')) {
+                value = value.replace(new RegExp('"', "g"), '""');
+              }
+
+              // Avoid cell content being interpreted as formulas by adding a leading single quote
+              value = CSVHelper.sanitizeValue(value);
+
+              return `"${value}"`;
+            })
+            .join(",")
+        )
+        .join("\n");
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    return true;
+  };
 }
 
 export function sortTable({
@@ -119,8 +207,12 @@ export function sortTable({
         return cell === "" ? false : isNaN(parseFloat(cell));
       });
 
+      const hasHeaderRow = table[0].every(
+        (cell) => cell.type === state.schema.nodes.th
+      );
+
       // remove the header row
-      const header = table.shift();
+      const header = hasHeaderRow ? table.shift() : undefined;
 
       // column data before sort
       const columnData = table.map((row) => row[index]?.textContent ?? "");
@@ -201,9 +293,15 @@ export function addRowBefore({ index }: { index?: number }): Command {
     // move inwards.
     const headerSpecialCase = position === 0 && isHeaderRowEnabled;
 
+    // Determine which row to copy alignment from (using original table indices)
+    // When inserting at position 0, copy from original row 0
+    // When inserting at other positions, copy from the row above (position - 1)
+    const copyFromRow = position === 0 ? 0 : position - 1;
+
     chainTransactions(
       headerSpecialCase ? toggleHeader("row") : undefined,
-      (s, d) => !!d?.(addRow(s.tr, rect, position)),
+      (s, d) =>
+        !!d?.(addRowWithAlignment(s.tr, rect, position, copyFromRow, s)),
       headerSpecialCase ? toggleHeader("row") : undefined,
       collapseSelection()
     )(state, dispatch);
@@ -295,12 +393,24 @@ export function addRowAndMoveSelection({
     // above instead of below.
     if (rect.left === 0 && view?.endOfTextblock("backward", state)) {
       const indexBefore = index !== undefined ? index - 1 : rect.top;
-      dispatch?.(addRow(state.tr, rect, indexBefore));
+      // Copy alignment from the current row (which will be pushed down)
+      const copyFromRow = indexBefore;
+      dispatch?.(
+        addRowWithAlignment(state.tr, rect, indexBefore, copyFromRow, state)
+      );
       return true;
     }
 
     const indexAfter = index !== undefined ? index + 1 : rect.bottom;
-    const tr = addRow(state.tr, rect, indexAfter);
+    // Copy alignment from the row above the insertion point
+    const copyFromRow = indexAfter > 0 ? indexAfter - 1 : undefined;
+    const tr = addRowWithAlignment(
+      state.tr,
+      rect,
+      indexAfter,
+      copyFromRow,
+      state
+    );
 
     // Special case when adding row to the end of the table as the calculated
     // rect does not include the row that we just added.
@@ -421,4 +531,172 @@ export function selectTable(): Command {
     }
     return false;
   };
+}
+
+export function moveOutOfTable(direction: 1 | -1): Command {
+  return (state, dispatch): boolean => {
+    if (dispatch) {
+      if (state.selection instanceof GapCursor) {
+        return false;
+      }
+      if (!isInTable(state)) {
+        return false;
+      }
+
+      // check if current cursor position is at the top or bottom of the table
+      const rect = selectedRect(state);
+      const topOfTable =
+        rect.top === 0 && rect.bottom === 1 && direction === -1;
+      const bottomOfTable =
+        rect.top === rect.map.height - 1 &&
+        rect.bottom === rect.map.height &&
+        direction === 1;
+
+      if (!topOfTable && !bottomOfTable) {
+        return false;
+      }
+
+      const map = rect.map.map;
+      const $start = state.doc.resolve(rect.tableStart + map[0] - 1);
+      const $end = state.doc.resolve(rect.tableStart + map[map.length - 1] + 2);
+
+      // @ts-expect-error findGapCursorFrom is a ProseMirror internal method.
+      const $found = GapCursor.findGapCursorFrom(
+        direction > 0 ? $end : $start,
+        direction,
+        true
+      );
+
+      if ($found) {
+        dispatch(state.tr.setSelection(new GapCursor($found)));
+        return true;
+      }
+    }
+    return false;
+  };
+}
+
+/**
+ * A command that deletes the entire table if all cells are selected.
+ *
+ * @returns The command
+ */
+export function deleteTableIfSelected(): Command {
+  return (state, dispatch): boolean => {
+    if (isTableSelected(state)) {
+      return deleteTable(state, dispatch);
+    }
+    return false;
+  };
+}
+
+export function deleteCellSelection(
+  state: EditorState,
+  dispatch?: (tr: Transaction) => void
+): boolean {
+  const sel = state.selection;
+  if (!(sel instanceof CellSelection)) {
+    return false;
+  }
+  if (dispatch) {
+    const tr = state.tr;
+    const baseContent = tableNodeTypes(state.schema).cell.createAndFill()!
+      .content;
+    sel.forEachCell((cell, pos) => {
+      if (!cell.content.eq(baseContent)) {
+        tr.replace(
+          tr.mapping.map(pos + 1),
+          tr.mapping.map(pos + cell.nodeSize - 1),
+          new Slice(baseContent, 0, 0)
+        );
+      }
+    });
+    if (tr.docChanged) {
+      dispatch(tr);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A command that splits a cell and collapses the selection.
+ *
+ * @returns The command
+ */
+export function splitCellAndCollapse(): Command {
+  return chainTransactions(splitCell, collapseSelection());
+}
+
+/**
+ * Helper function to add a row while copying alignment attributes from an existing row.
+ *
+ * @param tr The transaction
+ * @param rect The table rect
+ * @param index The index where to insert the row
+ * @param copyFromRow The row index to copy alignment from (optional)
+ * @param state The editor state
+ * @returns The modified transaction
+ */
+function addRowWithAlignment(
+  tr: Transaction,
+  rect: any,
+  index: number,
+  copyFromRow: number | undefined,
+  state: EditorState
+): Transaction {
+  // Get alignment attributes from the source row BEFORE inserting the new row
+  let sourceRowAlignments: (string | null)[] | undefined;
+
+  if (
+    copyFromRow !== undefined &&
+    copyFromRow >= 0 &&
+    copyFromRow < rect.map.height
+  ) {
+    const cellsInSourceRow = getCellsInRow(copyFromRow)(state);
+    if (cellsInSourceRow) {
+      sourceRowAlignments = cellsInSourceRow.map((pos) => {
+        const node = tr.doc.nodeAt(pos);
+        return node?.attrs.alignment || null;
+      });
+    }
+  }
+
+  // Now add the row using the standard prosemirror function
+  const newTr = addRow(tr, rect, index);
+
+  // Apply the copied alignments to the new row
+  if (sourceRowAlignments) {
+    const newState = state.apply(newTr);
+    const cellsInNewRow = getCellsInRow(index)(newState);
+
+    if (cellsInNewRow) {
+      cellsInNewRow.forEach((newCellPos, colIndex) => {
+        if (
+          colIndex < sourceRowAlignments.length &&
+          sourceRowAlignments[colIndex]
+        ) {
+          const newCellNode = newTr.doc.nodeAt(newCellPos);
+          if (newCellNode) {
+            const attrs = {
+              ...newCellNode.attrs,
+              alignment: sourceRowAlignments[colIndex],
+            };
+            newTr.setNodeMarkup(newCellPos, undefined, attrs);
+          }
+        }
+      });
+    }
+  }
+
+  return newTr;
+}
+
+/**
+ * A command that merges selected cells and collapses the selection.
+ *
+ * @returns The command
+ */
+export function mergeCellsAndCollapse(): Command {
+  return chainTransactions(mergeCells, collapseSelection());
 }

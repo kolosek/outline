@@ -1,28 +1,31 @@
 import path from "path";
 import fs from "fs-extra";
+import { createContext } from "@server/context";
 import Attachment from "@server/models/Attachment";
+import { sequelize } from "@server/storage/database";
 import { buildUser } from "@server/test/factories";
 import documentImporter from "./documentImporter";
 
 jest.mock("@server/storage/files");
 
 describe("documentImporter", () => {
-  const ip = "127.0.0.1";
-
   it("should convert Word Document to markdown", async () => {
     const user = await buildUser();
     const fileName = "images.docx";
     const content = await fs.readFile(
       path.resolve(__dirname, "..", "test", "fixtures", fileName)
     );
-    const response = await documentImporter({
-      user,
-      mimeType:
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      fileName,
-      content,
-      ip,
-    });
+
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
     const attachments = await Attachment.count({
       where: {
         teamId: user.teamId,
@@ -34,19 +37,42 @@ describe("documentImporter", () => {
     expect(response.title).toEqual("images");
   });
 
+  it("should not strip content after period in title", async () => {
+    const user = await buildUser();
+    const fileName = "01. test";
+    const content = await fs.readFile(
+      path.resolve(__dirname, "..", "test", "fixtures", "images.docx")
+    );
+
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
+    expect(response.text).toContain("This is a test document for images");
+    expect(response.title).toEqual("01. test");
+  });
+
   it("should convert Word Document to markdown for application/octet-stream mimetype", async () => {
     const user = await buildUser();
     const fileName = "images.docx";
     const content = await fs.readFile(
       path.resolve(__dirname, "..", "test", "fixtures", fileName)
     );
-    const response = await documentImporter({
-      user,
-      mimeType: "application/octet-stream",
-      fileName,
-      content,
-      ip,
-    });
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType: "application/octet-stream",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
     const attachments = await Attachment.count({
       where: {
         teamId: user.teamId,
@@ -67,13 +93,15 @@ describe("documentImporter", () => {
     let error;
 
     try {
-      await documentImporter({
-        user,
-        mimeType: "application/octet-stream",
-        fileName,
-        content,
-        ip,
-      });
+      await sequelize.transaction((transaction) =>
+        documentImporter({
+          user,
+          mimeType: "application/octet-stream",
+          fileName,
+          content,
+          ctx: createContext({ user, transaction }),
+        })
+      );
     } catch (err) {
       error = err.message;
     }
@@ -87,13 +115,15 @@ describe("documentImporter", () => {
     const content = await fs.readFile(
       path.resolve(__dirname, "..", "test", "fixtures", fileName)
     );
-    const response = await documentImporter({
-      user,
-      mimeType: "application/octet-stream",
-      fileName,
-      content,
-      ip,
-    });
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType: "application/octet-stream",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
     const attachments = await Attachment.count({
       where: {
         teamId: user.teamId,
@@ -112,13 +142,15 @@ describe("documentImporter", () => {
       path.resolve(__dirname, "..", "test", "fixtures", fileName),
       "utf8"
     );
-    const response = await documentImporter({
-      user,
-      mimeType: "text/html",
-      fileName,
-      content,
-      ip,
-    });
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType: "text/html",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
     expect(response.text).toContain("Text paragraph");
     expect(response.title).toEqual("Heading 1");
   });
@@ -129,13 +161,16 @@ describe("documentImporter", () => {
     const content = await fs.readFile(
       path.resolve(__dirname, "..", "test", "fixtures", fileName)
     );
-    const response = await documentImporter({
-      user,
-      mimeType: "application/msword",
-      fileName,
-      content,
-      ip,
-    });
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType: "application/msword",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
+
     expect(response.text).toContain("this is a test document");
     expect(response.title).toEqual("Heading 1");
   });
@@ -147,13 +182,15 @@ describe("documentImporter", () => {
       path.resolve(__dirname, "..", "test", "fixtures", fileName),
       "utf8"
     );
-    const response = await documentImporter({
-      user,
-      mimeType: "text/plain",
-      fileName,
-      content,
-      ip,
-    });
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType: "text/plain",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
     expect(response.text).toContain("This is a test paragraph");
     expect(response.title).toEqual("Heading 1");
   });
@@ -162,13 +199,16 @@ describe("documentImporter", () => {
     const user = await buildUser();
     const fileName = "markdown.md";
     const content = `# Title`;
-    const response = await documentImporter({
-      user,
-      mimeType: "text/plain",
-      fileName,
-      content,
-      ip,
-    });
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType: "text/plain",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
+
     expect(response.text).toEqual("");
     expect(response.title).toEqual("Title");
   });
@@ -180,13 +220,15 @@ describe("documentImporter", () => {
       path.resolve(__dirname, "..", "test", "fixtures", fileName),
       "utf8"
     );
-    const response = await documentImporter({
-      user,
-      mimeType: "application/lol",
-      fileName,
-      content,
-      ip,
-    });
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType: "application/lol",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
     expect(response.text).toContain("This is a test paragraph");
     expect(response.title).toEqual("Heading 1");
   });
@@ -200,13 +242,15 @@ describe("documentImporter", () => {
     let error;
 
     try {
-      await documentImporter({
-        user,
-        mimeType: "executable/zip",
-        fileName,
-        content,
-        ip,
-      });
+      await sequelize.transaction((transaction) =>
+        documentImporter({
+          user,
+          mimeType: "executable/zip",
+          fileName,
+          content,
+          ctx: createContext({ user, transaction }),
+        })
+      );
     } catch (err) {
       error = err.message;
     }
@@ -228,13 +272,15 @@ describe("documentImporter", () => {
           </body>
       </html>
     `;
-    const response = await documentImporter({
-      user,
-      mimeType: "text/html",
-      fileName,
-      content,
-      ip,
-    });
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType: "text/html",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
     expect(response.text).toEqual("\\$100");
   });
 
@@ -252,13 +298,15 @@ describe("documentImporter", () => {
           </body>
       </html>
     `;
-    const response = await documentImporter({
-      user,
-      mimeType: "text/html",
-      fileName,
-      content,
-      ip,
-    });
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType: "text/html",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
     expect(response.text).toEqual("`echo $foo`");
   });
 
@@ -276,13 +324,15 @@ describe("documentImporter", () => {
           </body>
       </html>
     `;
-    const response = await documentImporter({
-      user,
-      mimeType: "text/html",
-      fileName,
-      content,
-      ip,
-    });
+    const response = await sequelize.transaction((transaction) =>
+      documentImporter({
+        user,
+        mimeType: "text/html",
+        fileName,
+        content,
+        ctx: createContext({ user, transaction }),
+      })
+    );
     expect(response.text).toEqual("```\necho $foo\n```");
   });
 });

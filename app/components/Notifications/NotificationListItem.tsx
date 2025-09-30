@@ -4,12 +4,11 @@ import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import styled from "styled-components";
-import { s } from "@shared/styles";
+import { s, hover, truncateMultiline } from "@shared/styles";
 import Notification from "~/models/Notification";
 import CommentEditor from "~/scenes/Document/components/CommentEditor";
 import useStores from "~/hooks/useStores";
-import { hover, truncateMultiline } from "~/styles";
-import { Avatar, AvatarSize } from "../Avatar";
+import { Avatar, AvatarSize, AvatarVariant } from "../Avatar";
 import Flex from "../Flex";
 import Text from "../Text";
 import Time from "../Time";
@@ -42,7 +41,7 @@ function NotificationListItem({ notification, onNavigate }: Props) {
   return (
     <StyledLink to={notification.path ?? ""} onClick={handleClick}>
       <Container gap={8} $unread={!notification.viewedAt}>
-        <StyledAvatar model={notification.actor} size={AvatarSize.Large} />
+        <StyledAvatar model={notification.actor} />
         <Flex column>
           <Text as="div" size="small">
             <Text weight="bold">
@@ -52,11 +51,7 @@ function NotificationListItem({ notification, onNavigate }: Props) {
             <Text weight="bold">{notification.subject}</Text>
           </Text>
           <Text type="tertiary" size="xsmall">
-            <Time
-              dateTime={notification.createdAt}
-              tooltipDelay={1000}
-              addSuffix
-            />{" "}
+            <Time dateTime={notification.createdAt} addSuffix />{" "}
             {collection && <>&middot; {collection.name}</>}
           </Text>
           {notification.comment && (
@@ -84,7 +79,10 @@ const StyledCommentEditor = styled(CommentEditor)`
   ${truncateMultiline(3)}
 `;
 
-const StyledAvatar = styled(Avatar)`
+const StyledAvatar = styled(Avatar).attrs({
+  variant: AvatarVariant.Round,
+  size: AvatarSize.Medium,
+})`
   margin-top: 4px;
 `;
 

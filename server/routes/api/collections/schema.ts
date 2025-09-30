@@ -1,14 +1,20 @@
 import isUndefined from "lodash/isUndefined";
+import isUUID from "validator/lib/isUUID";
 import { z } from "zod";
-import { CollectionPermission, FileOperationFormat } from "@shared/types";
+import {
+  CollectionPermission,
+  CollectionStatusFilter,
+  FileOperationFormat,
+} from "@shared/types";
+import { UrlHelper } from "@shared/utils/UrlHelper";
 import { Collection } from "@server/models";
-import { zodIconType } from "@server/utils/zod";
+import { zodIconType, zodIdType } from "@server/utils/zod";
 import { ValidateColor, ValidateIndex } from "@server/validation";
 import { BaseSchema, ProsemirrorSchema } from "../schema";
 
 const BaseIdSchema = z.object({
   /** Id of the collection to be updated */
-  id: z.string(),
+  id: zodIdType(),
 });
 
 export const CollectionsCreateSchema = BaseSchema.extend({
@@ -39,13 +45,20 @@ export const CollectionsCreateSchema = BaseSchema.extend({
         message: `Must be ${ValidateIndex.maxLength} or fewer characters long`,
       })
       .optional(),
+    commenting: z.boolean().nullish(),
   }),
 });
 
 export type CollectionsCreateReq = z.infer<typeof CollectionsCreateSchema>;
 
 export const CollectionsInfoSchema = BaseSchema.extend({
-  body: BaseIdSchema,
+  body: BaseIdSchema.extend({
+    /** Share Id, if available */
+    shareId: z
+      .string()
+      .refine((val) => isUUID(val) || UrlHelper.SHARE_URL_SLUG_REGEX.test(val))
+      .optional(),
+  }),
 });
 
 export type CollectionsInfoReq = z.infer<typeof CollectionsInfoSchema>;
@@ -166,6 +179,7 @@ export const CollectionsUpdateSchema = BaseSchema.extend({
       })
       .optional(),
     sharing: z.boolean().optional(),
+    commenting: z.boolean().nullish(),
   }),
 });
 
@@ -174,6 +188,11 @@ export type CollectionsUpdateReq = z.infer<typeof CollectionsUpdateSchema>;
 export const CollectionsListSchema = BaseSchema.extend({
   body: z.object({
     includeListOnly: z.boolean().default(false),
+
+    query: z.string().optional(),
+
+    /** Collection statuses to include in results */
+    statusFilter: z.nativeEnum(CollectionStatusFilter).array().optional(),
   }),
 });
 
@@ -184,6 +203,22 @@ export const CollectionsDeleteSchema = BaseSchema.extend({
 });
 
 export type CollectionsDeleteReq = z.infer<typeof CollectionsDeleteSchema>;
+
+export const CollectionsArchiveSchema = BaseSchema.extend({
+  body: BaseIdSchema,
+});
+
+export type CollectionsArchiveReq = z.infer<typeof CollectionsArchiveSchema>;
+
+export const CollectionsRestoreSchema = BaseSchema.extend({
+  body: BaseIdSchema,
+});
+
+export type CollectionsRestoreReq = z.infer<typeof CollectionsRestoreSchema>;
+
+export const CollectionsArchivedSchema = BaseSchema;
+
+export type CollectionsArchivedReq = z.infer<typeof CollectionsArchivedSchema>;
 
 export const CollectionsMoveSchema = BaseSchema.extend({
   body: BaseIdSchema.extend({

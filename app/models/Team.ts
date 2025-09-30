@@ -10,11 +10,11 @@ class Team extends Model {
 
   @Field
   @observable
-  id: string;
+  name: string;
 
   @Field
   @observable
-  name: string;
+  description: string | null;
 
   @Field
   @observable

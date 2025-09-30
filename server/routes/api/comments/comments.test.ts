@@ -1,8 +1,14 @@
-import { CommentStatusFilter } from "@shared/types";
+import {
+  CommentStatusFilter,
+  ProsemirrorData,
+  ReactionSummary,
+} from "@shared/types";
+import { Comment, Reaction } from "@server/models";
 import {
   buildAdmin,
   buildCollection,
   buildComment,
+  buildCommentMark,
   buildDocument,
   buildResolvedComment,
   buildTeam,
@@ -77,6 +83,92 @@ describe("#comments.info", () => {
     expect(body.policies[0].abilities.update).toBeTruthy();
     expect(body.policies[0].abilities.delete).toBeTruthy();
   });
+
+  it("should return anchor text for an anchored comment", async () => {
+    const anchorText = "anchor text";
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    const comment = await buildComment({
+      userId: user.id,
+      documentId: document.id,
+    });
+    const content = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: anchorText,
+              marks: [buildCommentMark({ id: comment.id, userId: user.id })],
+            },
+          ],
+        },
+      ],
+    } as ProsemirrorData;
+    await document.update({ content });
+
+    const res = await server.post("/api/comments.info", {
+      body: {
+        token: user.getJwtToken(),
+        id: comment.id,
+        includeAnchorText: true,
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.id).toEqual(comment.id);
+    expect(body.data.anchorText).toEqual(anchorText);
+  });
+
+  it("should not return anchor text for a non-anchored comment", async () => {
+    const anchorText = "anchor text";
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    const comment = await buildComment({
+      userId: user.id,
+      documentId: document.id,
+    });
+    const content = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: anchorText,
+              marks: [buildCommentMark({ userId: user.id })],
+            },
+          ],
+        },
+      ],
+    } as ProsemirrorData;
+    await document.update({ content });
+
+    const res = await server.post("/api/comments.info", {
+      body: {
+        token: user.getJwtToken(),
+        id: comment.id,
+        includeAnchorText: true,
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.id).toEqual(comment.id);
+    expect(body.data.anchorText).toBeUndefined();
+  });
 });
 
 describe("#comments.list", () => {
@@ -117,6 +209,58 @@ describe("#comments.list", () => {
     expect(body.policies[0].abilities.read).toBeTruthy();
     expect(body.policies[1].abilities.read).toBeTruthy();
     expect(body.pagination.total).toEqual(2);
+  });
+
+  it("should return anchor texts for comments in a document", async () => {
+    const anchorText = "anchor text";
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    const commentOne = await buildComment({
+      userId: user.id,
+      documentId: document.id,
+    });
+    const commentTwo = await buildResolvedComment(user, {
+      userId: user.id,
+      documentId: document.id,
+    });
+    const content = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: anchorText,
+              marks: [buildCommentMark({ id: commentOne.id, userId: user.id })],
+            },
+          ],
+        },
+      ],
+    } as ProsemirrorData;
+    await document.update({ content });
+
+    const res = await server.post("/api/comments.list", {
+      body: {
+        token: user.getJwtToken(),
+        documentId: document.id,
+        includeAnchorText: true,
+        sort: "createdAt",
+        direction: "ASC",
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.length).toEqual(2);
+    expect(body.data[0].id).toEqual(commentOne.id);
+    expect(body.data[1].id).toEqual(commentTwo.id);
+    expect(body.data[0].anchorText).toEqual(anchorText);
+    expect(body.data[1].anchorText).toBeUndefined();
   });
 
   it("should return unresolved comments for a collection", async () => {
@@ -263,6 +407,40 @@ describe("#comments.list", () => {
     expect(body.policies[1].abilities.read).toBeTruthy();
     expect(body.pagination.total).toEqual(2);
   });
+
+  it("should return reactions for a comment", async () => {
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    const reactions: ReactionSummary[] = [
+      { emoji: "😄", userIds: [user.id] },
+      { emoji: "🙃", userIds: [user.id] },
+    ];
+    const comment = await buildComment({
+      userId: user.id,
+      documentId: document.id,
+      reactions,
+    });
+
+    const res = await server.post("/api/comments.list", {
+      body: {
+        token: user.getJwtToken(),
+        documentId: document.id,
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.length).toEqual(1);
+    expect(body.data[0].id).toEqual(comment.id);
+    expect(body.data[0].reactions).toEqual(reactions);
+    expect(body.policies.length).toEqual(1);
+    expect(body.policies[0].abilities.read).toBeTruthy();
+    expect(body.pagination.total).toEqual(1);
+  });
 });
 
 describe("#comments.create", () => {
@@ -301,6 +479,30 @@ describe("#comments.create", () => {
     expect(body.policies[0].abilities.read).toBeTruthy();
     expect(body.policies[0].abilities.update).toBeTruthy();
     expect(body.policies[0].abilities.delete).toBeTruthy();
+  });
+
+  it("should create a comment from markdown text", async () => {
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+
+    const text = "## heading\n\n- list item 1\n- list item 2";
+
+    const res = await server.post("/api/comments.create", {
+      body: {
+        token: user.getJwtToken(),
+        documentId: document.id,
+        text,
+      },
+    });
+
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.data.data).toMatchSnapshot();
   });
 
   it("should not allow empty comment data", async () => {
@@ -522,6 +724,7 @@ describe("#comments.resolve", () => {
     const body = await res.json();
 
     expect(res.status).toEqual(200);
+    expect(body.data.updatedAt).toEqual(comment.updatedAt.toISOString());
     expect(body.data.resolvedAt).toBeTruthy();
     expect(body.data.resolvedById).toEqual(user.id);
     expect(body.data.resolvedBy.id).toEqual(user.id);
@@ -592,6 +795,7 @@ describe("#comments.unresolve", () => {
     const body = await res.json();
 
     expect(res.status).toEqual(200);
+    expect(body.data.updatedAt).toEqual(comment.updatedAt.toISOString());
     expect(body.data.resolvedAt).toEqual(null);
     expect(body.data.resolvedBy).toEqual(null);
     expect(body.data.resolvedById).toEqual(null);
@@ -601,5 +805,179 @@ describe("#comments.unresolve", () => {
     expect(body.policies[0].abilities.delete).toBeTruthy();
     expect(body.policies[0].abilities.resolve).toBeTruthy();
     expect(body.policies[0].abilities.unresolve).toEqual(false);
+  });
+});
+
+describe("#comments.add_reaction", () => {
+  it("should require authentication", async () => {
+    const res = await server.post("/api/comments.add_reaction");
+    const body = await res.json();
+    expect(res.status).toEqual(401);
+    expect(body).toMatchSnapshot();
+  });
+
+  it("should add a reaction to a comment", async () => {
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    const comment = await buildComment({
+      userId: user.id,
+      documentId: document.id,
+    });
+
+    const res = await server.post("/api/comments.add_reaction", {
+      body: {
+        token: user.getJwtToken(),
+        id: comment.id,
+        emoji: "😄",
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.success).toEqual(true);
+
+    const updatedComment = await Comment.findByPk(comment.id);
+    const addedReaction = await Reaction.findOne({
+      where: { commentId: comment.id, emoji: "😄", userId: user.id },
+    });
+
+    expect(updatedComment?.reactions).toEqual([
+      { emoji: "😄", userIds: [user.id] },
+    ]);
+    expect(addedReaction).toBeTruthy();
+  });
+
+  it("should add a reaction to a comment with existing reactions", async () => {
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    const comment = await buildComment({
+      userId: user.id,
+      documentId: document.id,
+      reactions: [{ emoji: "😄", userIds: ["test-user"] }],
+    });
+
+    const res = await server.post("/api/comments.add_reaction", {
+      body: {
+        token: user.getJwtToken(),
+        id: comment.id,
+        emoji: "😄",
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.success).toEqual(true);
+
+    const updatedComment = await Comment.findByPk(comment.id);
+    const addedReaction = await Reaction.findOne({
+      where: { commentId: comment.id, emoji: "😄", userId: user.id },
+    });
+
+    expect(updatedComment?.reactions).toEqual([
+      { emoji: "😄", userIds: ["test-user", user.id] },
+    ]);
+    expect(addedReaction).toBeTruthy();
+  });
+});
+
+describe("#comments.remove_reaction", () => {
+  it("should require authentication", async () => {
+    const res = await server.post("/api/comments.remove_reaction");
+    const body = await res.json();
+    expect(res.status).toEqual(401);
+    expect(body).toMatchSnapshot();
+  });
+
+  it("should remove a reaction from a comment", async () => {
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    const comment = await buildComment({
+      userId: user.id,
+      documentId: document.id,
+    });
+    await Reaction.create(
+      {
+        emoji: "😄",
+        commentId: comment.id,
+        userId: user.id,
+      },
+      { hooks: false }
+    );
+
+    const res = await server.post("/api/comments.remove_reaction", {
+      body: {
+        token: user.getJwtToken(),
+        id: comment.id,
+        emoji: "😄",
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.success).toEqual(true);
+
+    const updatedComment = await Comment.findByPk(comment.id);
+    const removedReaction = await Reaction.findOne({
+      where: { commentId: comment.id, emoji: "😄", userId: user.id },
+    });
+
+    expect(updatedComment?.reactions).toEqual([]);
+    expect(removedReaction).toBeNull();
+  });
+
+  it("should remove a reaction from a comment with existing reactions", async () => {
+    const team = await buildTeam();
+    const user = await buildUser({ teamId: team.id });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+    const comment = await buildComment({
+      userId: user.id,
+      documentId: document.id,
+      reactions: [{ emoji: "😄", userIds: ["test-user"] }],
+    });
+    await Reaction.create(
+      {
+        emoji: "😄",
+        commentId: comment.id,
+        userId: user.id,
+      },
+      { hooks: false }
+    );
+
+    const res = await server.post("/api/comments.remove_reaction", {
+      body: {
+        token: user.getJwtToken(),
+        id: comment.id,
+        emoji: "😄",
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toEqual(200);
+    expect(body.success).toEqual(true);
+
+    const updatedComment = await Comment.findByPk(comment.id);
+    const removedReaction = await Reaction.findOne({
+      where: { commentId: comment.id, emoji: "😄", userId: user.id },
+    });
+
+    expect(updatedComment?.reactions).toEqual([
+      { emoji: "😄", userIds: ["test-user"] },
+    ]);
+    expect(removedReaction).toBeNull();
   });
 });

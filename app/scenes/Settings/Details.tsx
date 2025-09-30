@@ -10,13 +10,14 @@ import { ThemeProvider, useTheme } from "styled-components";
 import { buildDarkTheme, buildLightTheme } from "@shared/styles/theme";
 import { CustomTheme, TOCPosition, TeamPreference } from "@shared/types";
 import { getBaseDomain } from "@shared/utils/domains";
+import { TeamValidation } from "@shared/validations";
 import Button from "~/components/Button";
 import ButtonLink from "~/components/ButtonLink";
 import DefaultCollectionInputSelect from "~/components/DefaultCollectionInputSelect";
 import Heading from "~/components/Heading";
 import Input from "~/components/Input";
 import InputColor from "~/components/InputColor";
-import InputSelect from "~/components/InputSelect";
+import { InputSelect, Option } from "~/components/InputSelect";
 import Scene from "~/components/Scene";
 import Switch from "~/components/Switch";
 import Text from "~/components/Text";
@@ -44,6 +45,7 @@ function Details() {
     team.preferences?.customTheme?.accentText
   );
   const [name, setName] = useState(team.name);
+  const [description, setDescription] = useState(team.description || "");
   const [subdomain, setSubdomain] = useState(team.subdomain);
   const [publicBranding, setPublicBranding] = useState(
     team.preferences?.publicBranding
@@ -64,6 +66,27 @@ function Details() {
     team.getPreference(TeamPreference.TocPosition) as TOCPosition
   );
 
+  const tocPositionOptions: Option[] = React.useMemo(
+    () =>
+      [
+        {
+          type: "item",
+          label: t("Left"),
+          value: TOCPosition.Left,
+        },
+        {
+          type: "item",
+          label: t("Right"),
+          value: TOCPosition.Right,
+        },
+      ] satisfies Option[],
+    [t]
+  );
+
+  const handleTocPositionChange = React.useCallback((position: string) => {
+    setTocPosition(position as TOCPosition);
+  }, []);
+
   const handleSubmit = React.useCallback(
     async (event?: React.SyntheticEvent) => {
       if (event) {
@@ -73,6 +96,7 @@ function Details() {
       try {
         await team.save({
           name,
+          description,
           subdomain,
           defaultCollectionId,
           preferences: {
@@ -87,7 +111,17 @@ function Details() {
         toast.error(err.message);
       }
     },
-    [team, name, subdomain, defaultCollectionId, publicBranding, customTheme, t]
+    [
+      tocPosition,
+      team,
+      name,
+      description,
+      subdomain,
+      defaultCollectionId,
+      publicBranding,
+      customTheme,
+      t,
+    ]
   );
 
   const handleNameChange = React.useCallback(
@@ -123,9 +157,9 @@ function Details() {
     });
   };
 
-  const onSelectCollection = React.useCallback(async (value: string) => {
-    const defaultCollectionId = value === "home" ? null : value;
-    setDefaultCollectionId(defaultCollectionId);
+  const onSelectCollection = React.useCallback((value: string) => {
+    const selectedValue = value === "home" ? null : value;
+    setDefaultCollectionId(selectedValue);
   }, []);
 
   const isValid = form.current?.checkValidity();
@@ -159,6 +193,7 @@ function Details() {
             )}
           >
             <ImageInput
+              alt={t("Workspace logo")}
               onSuccess={handleAvatarChange}
               onError={handleAvatarError}
               model={team}
@@ -178,6 +213,19 @@ function Details() {
               value={name}
               onChange={handleNameChange}
               required
+            />
+          </SettingRow>
+          <SettingRow
+            label={t("Description")}
+            name="description"
+            description={t("A short description of your workspace.")}
+          >
+            <Input
+              id="description"
+              value={description}
+              onChange={(ev: React.ChangeEvent<HTMLInputElement>) => {
+                setDescription(ev.target.value);
+              }}
             />
           </SettingRow>
           <SettingRow
@@ -216,21 +264,19 @@ function Details() {
               flex
             />
           </SettingRow>
-          {team.avatarUrl && (
+          {(team.avatarUrl || team.description) && (
             <SettingRow
               name={TeamPreference.PublicBranding}
               label={t("Public branding")}
               description={t(
-                "Show your team’s logo on public pages like login and shared documents."
+                "Show your workspace logo, description, and branding on publicly shared pages."
               )}
             >
               <Switch
                 id={TeamPreference.PublicBranding}
                 name={TeamPreference.PublicBranding}
                 checked={publicBranding}
-                onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-                  setPublicBranding(event.target.checked)
-                }
+                onChange={(checked: boolean) => setPublicBranding(checked)}
               />
             </SettingRow>
           )}
@@ -243,19 +289,11 @@ function Details() {
             )}
           >
             <InputSelect
-              ariaLabel={t("Table of contents position")}
-              options={[
-                {
-                  label: t("Left"),
-                  value: TOCPosition.Left,
-                },
-                {
-                  label: t("Right"),
-                  value: TOCPosition.Right,
-                },
-              ]}
+              options={tocPositionOptions}
               value={tocPosition}
-              onChange={(p: TOCPosition) => setTocPosition(p)}
+              onChange={handleTocPositionChange}
+              label={t("Table of contents position")}
+              hideLabel
             />
           </SettingRow>
 
@@ -285,8 +323,12 @@ function Details() {
               value={subdomain || ""}
               onChange={handleSubdomainChange}
               autoComplete="off"
-              minLength={4}
-              maxLength={32}
+              minLength={TeamValidation.minSubdomainLength}
+              maxLength={
+                isCloudHosted
+                  ? TeamValidation.maxSubdomainLength
+                  : TeamValidation.maxSubdomainSelfHostedLength
+              }
             />
           </SettingRow>
           <SettingRow
@@ -298,7 +340,6 @@ function Details() {
             )}
           >
             <DefaultCollectionInputSelect
-              id="defaultCollectionId"
               onSelectCollection={onSelectCollection}
               defaultCollectionId={defaultCollectionId}
             />

@@ -1,7 +1,9 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
+/* oxlint-disable @typescript-eslint/ban-ts-comment */
 // @ts-nocheck
 // https://raw.githubusercontent.com/ProseMirror/prosemirror-markdown/master/src/to_markdown.js
 // forked for table support
+
+type Options = { tightLists?: boolean; softBreak?: boolean };
 
 // ::- A specification for serializing a ProseMirror document as
 // Markdown/CommonMark text.
@@ -50,7 +52,7 @@ export class MarkdownSerializer {
   // :: (Node, ?Object) → string
   // Serialize the content of the given node to
   // [CommonMark](http://commonmark.org/).
-  serialize(content, options?: { tightLists?: boolean }): string {
+  serialize(content, options?: Options): string {
     const state = new MarkdownSerializerState(this.nodes, this.marks, options);
     state.renderContent(content);
     return state.out;
@@ -66,6 +68,7 @@ export class MarkdownSerializerState {
   inTightList = false;
   closed = false;
   delim = "";
+  options: Options;
 
   constructor(nodes, marks, options) {
     this.nodes = nodes;
@@ -221,7 +224,7 @@ export class MarkdownSerializerState {
           return info && info.expelEnclosingWhitespace;
         })
       ) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
+        // oxlint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
         const [, lead, inner, trail] = /^(\s*)(.*?)(\s*)$/m.exec(node.text);
         leading += lead;
         trailing = trail;

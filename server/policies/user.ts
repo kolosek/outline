@@ -1,7 +1,14 @@
 import { TeamPreference } from "@shared/types";
 import { User, Team } from "@server/models";
 import { allow } from "./cancan";
-import { and, isTeamAdmin, isTeamModel, isTeamMutable, or } from "./utils";
+import {
+  and,
+  isTeamAdmin,
+  isTeamMember,
+  isTeamModel,
+  isTeamMutable,
+  or,
+} from "./utils";
 
 allow(User, "read", User, isTeamModel);
 
@@ -23,9 +30,25 @@ allow(User, "inviteUser", Team, (actor, team) =>
   )
 );
 
-allow(User, ["update", "delete", "readDetails"], User, (actor, user) =>
+allow(User, ["update", "readDetails", "listApiKeys"], User, (actor, user) =>
   or(
     //
+    isTeamAdmin(actor, user),
+    actor.id === user?.id
+  )
+);
+
+allow(User, "readEmail", User, (actor, user) =>
+  or(
+    //
+    isTeamAdmin(actor, user),
+    isTeamMember(actor, user),
+    actor.id === user?.id
+  )
+);
+
+allow(User, "delete", User, (actor, user) =>
+  or(
     isTeamAdmin(actor, user),
     and(
       actor.id === user?.id,
@@ -34,14 +57,17 @@ allow(User, ["update", "delete", "readDetails"], User, (actor, user) =>
   )
 );
 
-allow(User, ["activate", "suspend"], User, isTeamAdmin);
+allow(User, ["activate", "suspend"], User, (actor, user) =>
+  and(isTeamAdmin(actor, user), user?.id !== actor.id)
+);
 
 allow(User, "promote", User, (actor, user) =>
   and(
     //
     isTeamAdmin(actor, user),
     !user?.isAdmin,
-    !user?.isSuspended
+    !user?.isSuspended,
+    user?.id !== actor.id
   )
 );
 
@@ -49,7 +75,8 @@ allow(User, "demote", User, (actor, user) =>
   and(
     //
     isTeamAdmin(actor, user),
-    !user?.isSuspended
+    !user?.isSuspended,
+    user?.id !== actor.id
   )
 );
 

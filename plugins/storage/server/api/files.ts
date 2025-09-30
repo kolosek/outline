@@ -1,10 +1,12 @@
 import JWT from "jsonwebtoken";
 import Router from "koa-router";
 import mime from "mime-types";
+import contentDisposition from "content-disposition";
 import env from "@server/env";
 import {
   AuthenticationError,
   AuthorizationError,
+  NotFoundError,
   ValidationError,
 } from "@server/errors";
 import auth from "@server/middlewares/authentication";
@@ -77,26 +79,33 @@ router.get(
     const { isPublicBucket, fileName } = AttachmentHelper.parseKey(key);
     const skipAuthorize = isPublicBucket || isSignedRequest;
     const cacheHeader = "max-age=604800, immutable";
-    let contentType =
+    const attachment = await Attachment.findByKey(key);
+
+    if (!skipAuthorize) {
+      if (!attachment && !!ctx.input.query.key) {
+        throw NotFoundError();
+      }
+
+      authorize(actor, "read", attachment);
+    }
+
+    const contentType =
+      attachment?.contentType ||
       (fileName ? mime.lookup(fileName) : undefined) ||
       "application/octet-stream";
 
-    if (!skipAuthorize) {
-      const attachment = await Attachment.findOne({
-        where: { key },
-        rejectOnEmpty: true,
-      });
-      authorize(actor, "read", attachment);
-      contentType = attachment.contentType;
-    }
-
+    ctx.set("Accept-Ranges", "bytes");
     ctx.set("Cache-Control", cacheHeader);
     ctx.set("Content-Type", contentType);
-    ctx.attachment(fileName, {
-      type: forceDownload
-        ? "attachment"
-        : FileStorage.getContentDisposition(contentType),
-    });
+    ctx.set("Content-Security-Policy", "sandbox");
+    ctx.set(
+      "Content-Disposition",
+      contentDisposition(fileName, {
+        type: forceDownload
+          ? "attachment"
+          : FileStorage.getContentDisposition(contentType),
+      })
+    );
 
     // Handle byte range requests
     // https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests
@@ -104,6 +113,7 @@ router.get(
     const range = getByteRange(ctx, stats.size);
 
     if (range) {
+      ctx.status = 206;
       ctx.set("Content-Length", String(range.end - range.start + 1));
       ctx.set(
         "Content-Range",
@@ -148,7 +158,7 @@ function getKeyFromContext(ctx: APIContext<T.FilesGetReq>): string {
 
     try {
       JWT.verify(sig, env.SECRET_KEY);
-    } catch (err) {
+    } catch (_err) {
       throw AuthenticationError("Invalid signature");
     }
 

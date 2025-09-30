@@ -1,9 +1,10 @@
-import last from "lodash/last";
 import { observer } from "mobx-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { mergeRefs } from "react-merge-refs";
-import { useHistory, useRouteMatch } from "react-router-dom";
+import { useRouteMatch } from "react-router-dom";
+import styled from "styled-components";
+import Text from "@shared/components/Text";
 import { richExtensions, withComments } from "@shared/editor/nodes";
 import { TeamPreference } from "@shared/types";
 import { colorPalette } from "@shared/utils/collections";
@@ -13,20 +14,14 @@ import { RefHandle } from "~/components/ContentEditable";
 import { useDocumentContext } from "~/components/DocumentContext";
 import Editor, { Props as EditorProps } from "~/components/Editor";
 import Flex from "~/components/Flex";
-import BlockMenuExtension from "~/editor/extensions/BlockMenu";
-import ClipboardTextSerializer from "~/editor/extensions/ClipboardTextSerializer";
-import EmojiMenuExtension from "~/editor/extensions/EmojiMenu";
-import FindAndReplaceExtension from "~/editor/extensions/FindAndReplace";
-import HoverPreviewsExtension from "~/editor/extensions/HoverPreviews";
-import Keys from "~/editor/extensions/Keys";
-import MentionMenuExtension from "~/editor/extensions/MentionMenu";
-import PasteHandler from "~/editor/extensions/PasteHandler";
-import PreventTab from "~/editor/extensions/PreventTab";
-import SmartText from "~/editor/extensions/SmartText";
+import Time from "~/components/Time";
+import { withUIExtensions } from "~/editor/extensions";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
 import useCurrentUser from "~/hooks/useCurrentUser";
-import useFocusedComment from "~/hooks/useFocusedComment";
+import { useFocusedComment } from "~/hooks/useFocusedComment";
+import { useLocationSidebarContext } from "~/hooks/useLocationSidebarContext";
 import usePolicy from "~/hooks/usePolicy";
+import useQuery from "~/hooks/useQuery";
 import useStores from "~/hooks/useStores";
 import {
   documentHistoryPath,
@@ -37,21 +32,9 @@ import { decodeURIComponentSafe } from "~/utils/urls";
 import MultiplayerEditor from "./AsyncMultiplayerEditor";
 import DocumentMeta from "./DocumentMeta";
 import DocumentTitle from "./DocumentTitle";
+import first from "lodash/first";
 
-const extensions = [
-  ...withComments(richExtensions),
-  SmartText,
-  PasteHandler,
-  ClipboardTextSerializer,
-  BlockMenuExtension,
-  EmojiMenuExtension,
-  MentionMenuExtension,
-  FindAndReplaceExtension,
-  HoverPreviewsExtension,
-  // Order these default key handlers last
-  PreventTab,
-  Keys,
-];
+const extensions = withUIExtensions(withComments(richExtensions));
 
 type Props = Omit<EditorProps, "editorStyle"> & {
   onChangeTitle: (title: string) => void;
@@ -76,11 +59,13 @@ function DocumentEditor(props: Props, ref: React.RefObject<any>) {
   const titleRef = React.useRef<RefHandle>(null);
   const { t } = useTranslation();
   const match = useRouteMatch();
+  const { setFocusedCommentId } = useDocumentContext();
   const focusedComment = useFocusedComment();
   const { ui, comments } = useStores();
   const user = useCurrentUser({ rejectOnEmpty: false });
   const team = useCurrentTeam({ rejectOnEmpty: false });
-  const history = useHistory();
+  const sidebarContext = useLocationSidebarContext();
+  const params = useQuery();
   const {
     document,
     onChangeTitle,
@@ -93,8 +78,9 @@ function DocumentEditor(props: Props, ref: React.RefObject<any>) {
     ...rest
   } = props;
   const can = usePolicy(document);
+  const commentingEnabled = !!team?.getPreference(TeamPreference.Commenting);
 
-  const iconColor = document.color ?? (last(colorPalette) as string);
+  const iconColor = document.color ?? (first(colorPalette) as string);
   const childRef = React.useRef<HTMLDivElement>(null);
   const focusAtStart = React.useCallback(() => {
     if (ref.current) {
@@ -104,9 +90,16 @@ function DocumentEditor(props: Props, ref: React.RefObject<any>) {
 
   React.useEffect(() => {
     if (focusedComment) {
-      ui.expandComments(document.id);
+      const viewingResolved = params.get("resolved") === "";
+      if (
+        (focusedComment.isResolved && !viewingResolved) ||
+        (!focusedComment.isResolved && viewingResolved)
+      ) {
+        setFocusedCommentId(focusedComment.id);
+      }
+      ui.set({ commentsExpanded: true });
     }
-  }, [focusedComment, ui, document.id]);
+  }, [focusedComment, ui, document.id, params]);
 
   // Save document when blurring title, but delay so that if clicking on a
   // button this is allowed to execute first.
@@ -127,16 +120,6 @@ function DocumentEditor(props: Props, ref: React.RefObject<any>) {
     [focusAtStart, ref]
   );
 
-  const handleClickComment = React.useCallback(
-    (commentId: string) => {
-      history.replace({
-        pathname: window.location.pathname.replace(/\/history$/, ""),
-        state: { commentId },
-      });
-    },
-    [history]
-  );
-
   // Create a Comment model in local store when a comment mark is created, this
   // acts as a local draft before submission.
   const handleDraftComment = React.useCallback(
@@ -150,18 +133,15 @@ function DocumentEditor(props: Props, ref: React.RefObject<any>) {
           documentId: props.id,
           createdAt: new Date(),
           createdById,
+          reactions: [],
         },
         comments
       );
       comment.id = commentId;
       comments.add(comment);
-
-      history.replace({
-        pathname: window.location.pathname.replace(/\/history$/, ""),
-        state: { commentId },
-      });
+      setFocusedCommentId(commentId);
     },
-    [comments, user?.id, props.id, history]
+    [comments, user?.id, props.id]
   );
 
   // Soft delete the Comment model when associated mark is totally removed.
@@ -175,7 +155,11 @@ function DocumentEditor(props: Props, ref: React.RefObject<any>) {
     [comments]
   );
 
-  const { setEditor } = useDocumentContext();
+  const {
+    setEditor,
+    setEditorInitialized,
+    updateState: updateDocState,
+  } = useDocumentContext();
   const handleRefChanged = React.useCallback(setEditor, [setEditor]);
   const EditorComponent = multiplayer ? MultiplayerEditor : Editor;
 
@@ -188,6 +172,18 @@ function DocumentEditor(props: Props, ref: React.RefObject<any>) {
     }),
     [childOffsetHeight]
   );
+
+  const handleInit = React.useCallback(
+    () => setEditorInitialized(true),
+    [setEditorInitialized]
+  );
+
+  const handleDestroy = React.useCallback(
+    () => setEditorInitialized(false),
+    [setEditorInitialized]
+  );
+
+  const direction = titleRef.current?.getComputedDirection();
 
   return (
     <Flex auto column>
@@ -208,17 +204,27 @@ function DocumentEditor(props: Props, ref: React.RefObject<any>) {
         onBlur={handleBlur}
         placeholder={t("Untitled")}
       />
-      {!shareId && (
+      {shareId ? (
+        document.updatedAt ? (
+          <SharedMeta type="tertiary">
+            {t("Last updated")} <Time dateTime={document.updatedAt} addSuffix />
+          </SharedMeta>
+        ) : null
+      ) : (
         <DocumentMeta
           document={document}
           to={
-            match.path === matchDocumentHistory
-              ? documentPath(document)
-              : documentHistoryPath(document)
+            shareId
+              ? undefined
+              : {
+                  pathname:
+                    match.path === matchDocumentHistory
+                      ? documentPath(document)
+                      : documentHistoryPath(document),
+                  state: { sidebarContext },
+                }
           }
-          rtl={
-            titleRef.current?.getComputedDirection() === "rtl" ? true : false
-          }
+          rtl={direction === "rtl"}
         />
       )}
       <EditorComponent
@@ -230,17 +236,18 @@ function DocumentEditor(props: Props, ref: React.RefObject<any>) {
         shareId={shareId}
         userId={user?.id}
         focusedCommentId={focusedComment?.id}
-        onClickCommentMark={handleClickComment}
+        onClickCommentMark={
+          commentingEnabled && can.comment ? setFocusedCommentId : undefined
+        }
         onCreateCommentMark={
-          team?.getPreference(TeamPreference.Commenting) && can.comment
-            ? handleDraftComment
-            : undefined
+          commentingEnabled && can.comment ? handleDraftComment : undefined
         }
         onDeleteCommentMark={
-          team?.getPreference(TeamPreference.Commenting) && can.comment
-            ? handleRemoveComment
-            : undefined
+          commentingEnabled && can.comment ? handleRemoveComment : undefined
         }
+        onInit={handleInit}
+        onDestroy={handleDestroy}
+        onChange={updateDocState}
         extensions={extensions}
         editorStyle={editorStyle}
         {...rest}
@@ -249,5 +256,10 @@ function DocumentEditor(props: Props, ref: React.RefObject<any>) {
     </Flex>
   );
 }
+
+const SharedMeta = styled(Text)`
+  margin: -12px 0 2em 0;
+  font-size: 14px;
+`;
 
 export default observer(React.forwardRef(DocumentEditor));

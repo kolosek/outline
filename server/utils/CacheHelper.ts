@@ -1,6 +1,7 @@
 import { Day } from "@shared/utils/time";
 import Logger from "@server/logging/Logger";
 import Redis from "@server/storage/redis";
+import { MutexLock } from "./MutexLock";
 
 /**
  * A Helper class for server-side cache management
@@ -8,6 +9,56 @@ import Redis from "@server/storage/redis";
 export class CacheHelper {
   // Default expiry time for cache data in seconds
   private static defaultDataExpiry = Day.seconds;
+
+  /**
+   * Given a key this method will attempt to get the data from cache store first
+   * If data is not found, it will call the callback to get the data and save it in cache
+   * using a distributed lock to prevent multiple writes.
+   *
+   * @param key Cache key
+   * @param callback Callback to get the data if not found in cache
+   * @param expiry Cache data expiry in seconds
+   * @param lockTimeout Lock timeout in milliseconds
+   * @returns The data from cache or the result of the callback
+   */
+  public static async getDataOrSet<T>(
+    key: string,
+    callback: () => Promise<T | undefined>,
+    expiry: number,
+    lockTimeout: number = MutexLock.defaultLockTimeout
+  ): Promise<T | undefined> {
+    let cache = await this.getData<T>(key);
+
+    if (cache) {
+      return cache;
+    }
+
+    // Nothing in the cache, acquire a lock to prevent multiple writes
+    let lock;
+    const lockKey = `lock:${key}`;
+    try {
+      try {
+        lock = await MutexLock.lock.acquire([lockKey], lockTimeout);
+      } catch (err) {
+        Logger.error(`Could not acquire lock for ${key}`, err);
+      }
+      cache = await this.getData<T>(key);
+      if (cache) {
+        return cache;
+      }
+
+      // Get the data from the callback and save it in cache
+      const value = await callback();
+      if (value) {
+        await this.setData<T>(key, value, expiry);
+      }
+      return value;
+    } finally {
+      if (lock && lock.expiration > new Date().getTime()) {
+        await lock.release();
+      }
+    }
+  }
 
   /**
    * Given a key, gets the data from cache store
@@ -73,5 +124,9 @@ export class CacheHelper {
    */
   public static getUnfurlKey(teamId: string, url = "") {
     return `unfurl:${teamId}:${url}`;
+  }
+
+  public static getCollectionDocumentsKey(collectionId: string) {
+    return `cd:${collectionId}`;
   }
 }

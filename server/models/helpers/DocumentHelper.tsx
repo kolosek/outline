@@ -1,9 +1,7 @@
-import {
-  updateYFragment,
-  yDocToProsemirrorJSON,
-} from "@getoutline/y-prosemirror";
 import { JSDOM } from "jsdom";
 import { Node } from "prosemirror-model";
+import ukkonen from "ukkonen";
+import { updateYFragment, yDocToProsemirrorJSON } from "y-prosemirror";
 import * as Y from "yjs";
 import textBetween from "@shared/editor/lib/textBetween";
 import { EditorStyleHelper } from "@shared/editor/styles/EditorStyleHelper";
@@ -14,7 +12,7 @@ import { addTags } from "@server/logging/tracer";
 import { trace } from "@server/logging/tracing";
 import { Collection, Document, Revision } from "@server/models";
 import diff from "@server/utils/diff";
-import { ProsemirrorHelper } from "./ProsemirrorHelper";
+import { MentionAttrs, ProsemirrorHelper } from "./ProsemirrorHelper";
 import { TextHelper } from "./TextHelper";
 
 type HTMLOptions = {
@@ -24,6 +22,8 @@ type HTMLOptions = {
   includeStyles?: boolean;
   /** Whether to include the Mermaid script in the generated HTML (defaults to false) */
   includeMermaid?: boolean;
+  /** Whether to include the doctype,head, etc in the generated HTML (defaults to false) */
+  includeHead?: boolean;
   /** Whether to include styles to center diff (defaults to true) */
   centered?: boolean;
   /**
@@ -105,7 +105,7 @@ export class DocumentHelper {
     } else if (document instanceof Collection) {
       doc = parser.parse(document.description ?? "");
     } else {
-      doc = parser.parse(document.text);
+      doc = parser.parse(document.text ?? "");
     }
 
     if (doc && options?.signedUrls && options?.teamId) {
@@ -135,23 +135,27 @@ export class DocumentHelper {
    * Returns the document as plain text. This method uses the
    * collaborative state if available, otherwise it falls back to Markdown.
    *
-   * @param document The document or revision to convert
+   * @param document The document or revision or prosemirror data to convert
    * @returns The document content as plain text without formatting.
    */
-  static toPlainText(document: Document | Revision) {
+  static toPlainText(document: Document | Revision | ProsemirrorData) {
     const node = DocumentHelper.toProsemirror(document);
-
-    return textBetween(node, 0, node.content.size, this.textSerializers);
+    return textBetween(node, 0, node.content.size);
   }
 
   /**
    * Returns the document as Markdown. This is a lossy conversion and should only be used for export.
    *
    * @param document The document or revision to convert
+   * @param options Options for the conversion
    * @returns The document title and content as a Markdown string
    */
   static toMarkdown(
-    document: Document | Revision | Collection | ProsemirrorData
+    document: Document | Revision | Collection | ProsemirrorData,
+    options?: {
+      /** Whether to include the document title (default: true) */
+      includeTitle?: boolean;
+    }
   ) {
     const text = serializer
       .serialize(DocumentHelper.toProsemirror(document))
@@ -166,7 +170,10 @@ export class DocumentHelper {
       return text;
     }
 
-    if (document instanceof Document || document instanceof Revision) {
+    if (
+      (document instanceof Document || document instanceof Revision) &&
+      options?.includeTitle !== false
+    ) {
       const iconType = determineIconType(document.icon);
 
       const title = `${iconType === IconType.Emoji ? document.icon + " " : ""}${
@@ -182,30 +189,40 @@ export class DocumentHelper {
   /**
    * Returns the document as plain HTML. This is a lossy conversion and should only be used for export.
    *
-   * @param document The document or revision to convert
+   * @param model The document or revision or collection to convert
    * @param options Options for the HTML output
    * @returns The document title and content as a HTML string
    */
-  static async toHTML(document: Document | Revision, options?: HTMLOptions) {
-    const node = DocumentHelper.toProsemirror(document);
+  static async toHTML(
+    model: Document | Revision | Collection,
+    options?: HTMLOptions
+  ) {
+    const node = DocumentHelper.toProsemirror(model);
     let output = ProsemirrorHelper.toHTML(node, {
-      title: options?.includeTitle !== false ? document.title : undefined,
+      title:
+        options?.includeTitle !== false
+          ? model instanceof Collection
+            ? model.name
+            : model.title
+          : undefined,
       includeStyles: options?.includeStyles,
       includeMermaid: options?.includeMermaid,
+      includeHead: options?.includeHead,
       centered: options?.centered,
       baseUrl: options?.baseUrl,
     });
 
     addTags({
-      documentId: document.id,
+      collectionId: model instanceof Collection ? model.id : undefined,
+      documentId: !(model instanceof Collection) ? model.id : undefined,
       options,
     });
 
     if (options?.signedUrls) {
       const teamId =
-        document instanceof Document
-          ? document.teamId
-          : (await document.$get("document"))?.teamId;
+        model instanceof Collection || model instanceof Document
+          ? model.teamId
+          : (await model.$get("document"))?.teamId;
 
       if (!teamId) {
         return output;
@@ -225,11 +242,26 @@ export class DocumentHelper {
    * Parse a list of mentions contained in a document or revision
    *
    * @param document Document or Revision
+   * @param options Attributes to use for filtering mentions
    * @returns An array of mentions in passed document or revision
    */
-  static parseMentions(document: Document | Revision) {
+  static parseMentions(
+    document: Document | Revision,
+    options?: Partial<MentionAttrs>
+  ) {
     const node = DocumentHelper.toProsemirror(document);
-    return ProsemirrorHelper.parseMentions(node);
+    return ProsemirrorHelper.parseMentions(node, options);
+  }
+
+  /**
+   * Parse a list of document IDs contained in a document or revision
+   *
+   * @param document Document or Revision
+   * @returns An array of identifiers in passed document or revision
+   */
+  static parseDocumentIds(document: Document | Revision) {
+    const node = DocumentHelper.toProsemirror(document);
+    return ProsemirrorHelper.parseDocumentIds(node);
   }
 
   /**
@@ -453,7 +485,10 @@ export class DocumentHelper {
       }
 
       // apply new document to existing ydoc
-      updateYFragment(type.doc, type, doc, new Map());
+      updateYFragment(type.doc, type, doc, {
+        mapping: new Map(),
+        isOMark: new Map(),
+      });
 
       const state = Y.encodeStateAsUpdate(ydoc);
 
@@ -465,30 +500,25 @@ export class DocumentHelper {
   }
 
   /**
-   * Compares two documents and returns true if the text content is equal. This does not take into account
-   * changes to other properties such as table column widths, other visual settings.
+   * Compares two documents or revisions and returns whether the text differs by more than the threshold.
    *
    * @param document The document to compare
    * @param other The other document to compare
-   * @returns True if the text content is equal
+   * @param threshold The threshold for the change in characters
+   * @returns True if the text differs by more than the threshold
    */
-  public static isTextContentEqual(
+  public static isChangeOverThreshold(
     before: Document | Revision | null,
-    after: Document | Revision | null
+    after: Document | Revision | null,
+    threshold: number
   ) {
     if (!before || !after) {
       return false;
     }
 
-    return (
-      before.title === after.title &&
-      this.toMarkdown(before) === this.toMarkdown(after)
-    );
+    const first = before.title + this.toPlainText(before);
+    const second = after.title + this.toPlainText(after);
+    const distance = ukkonen(first, second, threshold + 1);
+    return distance > threshold;
   }
-
-  private static textSerializers = Object.fromEntries(
-    Object.entries(schema.nodes)
-      .filter(([, n]) => n.spec.toPlainText)
-      .map(([name, n]) => [name, n.spec.toPlainText])
-  );
 }

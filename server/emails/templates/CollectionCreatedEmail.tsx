@@ -2,7 +2,7 @@ import * as React from "react";
 import { NotificationEventType } from "@shared/types";
 import { Collection } from "@server/models";
 import NotificationSettingsHelper from "@server/models/helpers/NotificationSettingsHelper";
-import BaseEmail, { EmailProps } from "./BaseEmail";
+import BaseEmail, { EmailMessageCategory, EmailProps } from "./BaseEmail";
 import Body from "./components/Body";
 import Button from "./components/Button";
 import EmailTemplate from "./components/EmailLayout";
@@ -32,10 +32,15 @@ export default class CollectionCreatedEmail extends BaseEmail<
   InputProps,
   BeforeSend
 > {
+  protected get category() {
+    return EmailMessageCategory.Notification;
+  }
+
   protected async beforeSend(props: InputProps) {
-    const collection = await Collection.scope("withUser").findByPk(
-      props.collectionId
-    );
+    const collection = await Collection.findByPk(props.collectionId, {
+      includeOwner: true,
+    });
+
     if (!collection) {
       return false;
     }

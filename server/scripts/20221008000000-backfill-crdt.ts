@@ -1,9 +1,6 @@
 import "./bootstrap";
-import {
-  updateYFragment,
-  yDocToProsemirrorJSON,
-} from "@getoutline/y-prosemirror";
 import { Node } from "prosemirror-model";
+import { updateYFragment, yDocToProsemirrorJSON } from "y-prosemirror";
 import * as Y from "yjs";
 import { parser, schema, serializer } from "@server/editor";
 import { Document } from "@server/models";
@@ -50,7 +47,10 @@ export default async function main(exit = false) {
       }
 
       // apply new document to existing ydoc
-      updateYFragment(type.doc, type, doc, new Map());
+      updateYFragment(type.doc, type, doc, {
+        mapping: new Map(),
+        isOMark: new Map(),
+      });
 
       const state = Y.encodeStateAsUpdate(ydoc);
       document.state = Buffer.from(state);

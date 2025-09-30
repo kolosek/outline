@@ -16,7 +16,7 @@ export type Options = {
   /** Set to true to replace any existing image at the users selection */
   replaceExisting?: boolean;
   /** Callback fired to upload a file */
-  uploadFile?: (file: File) => Promise<string>;
+  uploadFile?: (file: File | string) => Promise<string>;
   /** Callback fired when the user starts a file upload */
   onFileUploadStart?: () => void;
   /** Callback fired when the user completes a file upload */
@@ -58,18 +58,18 @@ const insertFiles = async function (
   const filesToUpload = await Promise.all(
     files.map(async (file) => {
       const isImage =
-        FileHelper.isImage(file) &&
+        FileHelper.isImage(file.type) &&
         !options.isAttachment &&
         !!schema.nodes.image;
       const isVideo =
-        FileHelper.isVideo(file) &&
+        FileHelper.isVideo(file.type) &&
         !options.isAttachment &&
         !!schema.nodes.video;
       const getDimensions = isImage
         ? FileHelper.getImageDimensions
         : isVideo
-        ? FileHelper.getVideoDimensions
-        : undefined;
+          ? FileHelper.getVideoDimensions
+          : undefined;
 
       return {
         id: `upload-${uuidv4()}`,
@@ -187,7 +187,7 @@ const insertFiles = async function (
       .catch((error) => {
         Sentry.captureException(error);
 
-        // eslint-disable-next-line no-console
+        // oxlint-disable-next-line no-console
         console.error(error);
 
         if (view.isDestroyed) {

@@ -1,16 +1,16 @@
-import * as React from "react";
+import { useMemo, useState, useCallback, memo, Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
 import { s } from "@shared/styles";
 import { isMac } from "@shared/utils/browser";
+import { metaDisplay, altDisplay } from "@shared/utils/keyboard";
 import Flex from "~/components/Flex";
 import InputSearch from "~/components/InputSearch";
 import Key from "~/components/Key";
-import { metaDisplay, altDisplay } from "~/utils/keyboard";
 
 function KeyboardShortcuts() {
   const { t } = useTranslation();
-  const categories = React.useMemo(
+  const categories = useMemo(
     () => [
       {
         title: t("Navigation"),
@@ -206,7 +206,8 @@ function KeyboardShortcuts() {
           {
             shortcut: (
               <>
-                <Key symbol>{metaDisplay}</Key> + <Key>Ctrl</Key> + <Key>h</Key>
+                <Key symbol>{metaDisplay}</Key> + <Key symbol>⇧</Key> +{" "}
+                <Key>h</Key>
               </>
             ),
             label: t("Highlight"),
@@ -259,6 +260,24 @@ function KeyboardShortcuts() {
               </>
             ),
             label: t("Redo"),
+          },
+          {
+            shortcut: (
+              <>
+                <Key symbol>{metaDisplay}</Key> + <Key symbol>{altDisplay}</Key>{" "}
+                + <Key symbol>↑</Key>
+              </>
+            ),
+            label: t("Move block up"),
+          },
+          {
+            shortcut: (
+              <>
+                <Key symbol>{metaDisplay}</Key> + <Key symbol>{altDisplay}</Key>{" "}
+                + <Key symbol>↓</Key>
+              </>
+            ),
+            label: t("Move block down"),
           },
         ],
       },
@@ -416,6 +435,10 @@ function KeyboardShortcuts() {
             label: t("Horizontal divider"),
           },
           {
+            shortcut: <Key>{"|--"}</Key>,
+            label: t("Table"),
+          },
+          {
             shortcut: <Key>{"```"}</Key>,
             label: t("Code block"),
           },
@@ -457,31 +480,53 @@ function KeyboardShortcuts() {
           },
         ],
       },
+      {
+        title: t("Triggers"),
+        items: [
+          {
+            shortcut: "@",
+            label: t("Mention users and more"),
+          },
+          {
+            shortcut: ":",
+            label: t("Emoji"),
+          },
+          {
+            shortcut: "/",
+            label: t("Insert block"),
+          },
+        ],
+      },
     ],
     [t]
   );
-  const [searchTerm, setSearchTerm] = React.useState("");
-  const handleChange = React.useCallback((event) => {
+  const [searchTerm, setSearchTerm] = useState("");
+  const normalizedSearchTerm = searchTerm.toLocaleLowerCase();
+  const handleChange = useCallback((event) => {
     setSearchTerm(event.target.value);
   }, []);
-  const handleKeyDown = React.useCallback((event) => {
+
+  const handleKeyDown = useCallback((event) => {
     if (event.currentTarget.value && event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       setSearchTerm("");
     }
   }, []);
+
   return (
     <Flex column>
-      <InputSearch
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        value={searchTerm}
-      />
+      <StickySearch>
+        <InputSearch
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          value={searchTerm}
+        />
+      </StickySearch>
       {categories.map((category, x) => {
         const filtered = searchTerm
           ? category.items.filter((item) =>
-              item.label.toLowerCase().includes(searchTerm.toLowerCase())
+              item.label.toLocaleLowerCase().includes(normalizedSearchTerm)
             )
           : category.items;
 
@@ -490,24 +535,34 @@ function KeyboardShortcuts() {
         }
 
         return (
-          <React.Fragment key={x}>
+          <Fragment key={x}>
             <Header>{category.title}</Header>
             <List>
               {filtered.map((item) => (
-                <React.Fragment key={item.label}>
+                <Fragment key={item.label}>
                   <Keys>
                     <span>{item.shortcut}</span>
                   </Keys>
                   <Label>{item.label}</Label>
-                </React.Fragment>
+                </Fragment>
               ))}
             </List>
-          </React.Fragment>
+          </Fragment>
         );
       })}
     </Flex>
   );
 }
+
+const StickySearch = styled.div`
+  position: sticky;
+  top: -16px;
+  z-index: 1;
+  padding: 16px;
+  margin: -16px;
+  background: ${s("background")};
+  border-radius: 8px;
+`;
 
 const Header = styled.h2`
   font-size: 15px;
@@ -546,4 +601,4 @@ const Label = styled.dd`
   color: ${s("textSecondary")};
 `;
 
-export default React.memo(KeyboardShortcuts);
+export default memo(KeyboardShortcuts);

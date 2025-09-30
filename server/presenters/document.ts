@@ -1,3 +1,4 @@
+import { Hour } from "@shared/utils/time";
 import { traceFunction } from "@server/logging/tracing";
 import { Document } from "@server/models";
 import { DocumentHelper } from "@server/models/helpers/DocumentHelper";
@@ -13,6 +14,8 @@ type Options = {
   includeText?: boolean;
   /** Always include the data of the document in the payload. */
   includeData?: boolean;
+
+  includeUpdatedAt?: boolean;
 };
 
 async function presentDocument(
@@ -31,7 +34,7 @@ async function presentDocument(
     document,
     options.isPublic
       ? {
-          signedUrls: 60,
+          signedUrls: Hour.seconds,
           teamId: document.teamId,
           removeMarks: ["comment"],
           internalUrlBase: `/s/${options.shareId}`,
@@ -41,7 +44,7 @@ async function presentDocument(
 
   const text =
     !asData || options?.includeText
-      ? DocumentHelper.toMarkdown(data)
+      ? DocumentHelper.toMarkdown(data, { includeTitle: false })
       : undefined;
 
   const res: Record<string, any> = {
@@ -74,6 +77,10 @@ async function presentDocument(
     res.lastViewedAt = document.views[0].updatedAt;
   }
 
+  if (options.isPublic && !options.includeUpdatedAt) {
+    delete res.updatedAt;
+  }
+
   if (!options.isPublic) {
     const source = await document.$get("import");
 
@@ -92,6 +99,7 @@ async function presentDocument(
           importType: source?.format,
           createdByName: document.sourceMetadata.createdByName,
           fileName: document.sourceMetadata?.fileName,
+          originalDocumentId: document.sourceMetadata?.originalDocumentId,
         }
       : undefined;
   }

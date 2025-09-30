@@ -7,7 +7,6 @@ import { depths, s } from "@shared/styles";
 import ErrorBoundary from "~/components/ErrorBoundary";
 import Flex from "~/components/Flex";
 import ResizeBorder from "~/components/Sidebar/components/ResizeBorder";
-import useMobile from "~/hooks/useMobile";
 import useStores from "~/hooks/useStores";
 import { sidebarAppearDuration } from "~/styles/animations";
 
@@ -20,7 +19,6 @@ function Right({ children, border, className }: Props) {
   const theme = useTheme();
   const { ui } = useStores();
   const [isResizing, setResizing] = React.useState(false);
-  const isMobile = useMobile();
   const maxWidth = theme.sidebarMaxWidth;
   const minWidth = theme.sidebarMinWidth + 16; // padding
 
@@ -32,13 +30,13 @@ function Right({ children, border, className }: Props) {
         Math.min(window.innerWidth - event.pageX, maxWidth),
         minWidth
       );
-      ui.setRightSidebarWidth(width);
+      ui.set({ sidebarRightWidth: width });
     },
     [minWidth, maxWidth, ui]
   );
 
   const handleReset = React.useCallback(() => {
-    ui.setRightSidebarWidth(theme.sidebarRightWidth);
+    ui.set({ sidebarRightWidth: theme.sidebarRightWidth });
   }, [ui, theme.sidebarRightWidth]);
 
   const handleStopDrag = React.useCallback(() => {
@@ -100,13 +98,11 @@ function Right({ children, border, className }: Props) {
     <Sidebar {...animationProps} $border={border} className={className}>
       <Position style={style} column>
         <ErrorBoundary>{children}</ErrorBoundary>
-        {!isMobile && (
-          <ResizeBorder
-            onMouseDown={handleMouseDown}
-            onDoubleClick={handleReset}
-            dir="right"
-          />
-        )}
+        <ResizeBorder
+          onMouseDown={handleMouseDown}
+          onDoubleClick={handleReset}
+          dir="right"
+        />
       </Position>
     </Sidebar>
   );
@@ -128,7 +124,7 @@ const Sidebar = styled(m.div)<{
   max-width: 80%;
   border-left: 1px solid ${s("divider")};
   transition: border-left 100ms ease-in-out;
-  z-index: 1;
+  z-index: ${depths.sidebar};
 
   ${breakpoint("mobile", "tablet")`
     display: flex;

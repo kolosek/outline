@@ -10,7 +10,11 @@ const tableShouldBeSkippedCache = new WeakMap<HTMLTableElement, boolean>();
 
 function getAlignment(node: HTMLElement) {
   return node
-    ? (node.getAttribute("align") || node.style.textAlign || "").toLowerCase()
+    ? ((
+        node.getAttribute("align") ||
+        node.style.textAlign ||
+        ""
+      ).toLowerCase() as "left" | "right" | "center")
     : "";
 }
 
@@ -149,23 +153,7 @@ function isHeadingRow(tr: Node) {
 
   return (
     parentNode.nodeName === "THEAD" ||
-    (parentNode.firstChild === tr &&
-      (parentNode.nodeName === "TABLE" || isFirstTbody(parentNode)) &&
-      Array.from(tr.childNodes).every((n) => n.nodeName === "TH"))
-  );
-}
-
-function isFirstTbody(element: Node) {
-  const previousSibling = element?.previousSibling;
-  if (!previousSibling) {
-    return false;
-  }
-
-  return (
-    element.nodeName === "TBODY" &&
-    (!previousSibling ||
-      (previousSibling.nodeName === "THEAD" &&
-        /^\s*$/i.test(previousSibling.textContent ?? "")))
+    Array.from(tr.childNodes).every((n) => n.nodeName === "TH")
   );
 }
 

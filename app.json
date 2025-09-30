@@ -3,13 +3,7 @@
   "description": "Open source wiki and knowledge base for growing teams",
   "website": "https://www.getoutline.com/",
   "repository": "https://github.com/outline/outline",
-  "keywords": [
-    "wiki",
-    "team",
-    "node",
-    "markdown",
-    "slack"
-  ],
+  "keywords": ["wiki", "team", "node", "markdown", "slack"],
   "success_url": "/",
   "formation": {
     "web": {
@@ -169,6 +163,10 @@
     },
     "SMTP_HOST": {
       "description": "smtp.example.com (optional)",
+      "required": false
+    },
+    "SMTP_SERVICE": {
+      "description": "Well-known SMTP service name for nodemailer (optional, e.g. 'gmail', 'SES')",
       "required": false
     },
     "SMTP_PORT": {

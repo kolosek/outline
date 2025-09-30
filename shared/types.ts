@@ -1,8 +1,16 @@
+/** Available user roles. */
 export enum UserRole {
   Admin = "admin",
   Member = "member",
   Viewer = "viewer",
   Guest = "guest",
+}
+
+/** Scopes for OAuth and API keys. */
+export enum Scope {
+  Read = "read",
+  Write = "write",
+  Create = "create",
 }
 
 export type DateFilter = "day" | "week" | "month" | "year";
@@ -11,6 +19,10 @@ export enum StatusFilter {
   Published = "published",
   Archived = "archived",
   Draft = "draft",
+}
+
+export enum CollectionStatusFilter {
+  Archived = "archived",
 }
 
 export enum CommentStatusFilter {
@@ -50,8 +62,29 @@ export enum FileOperationState {
   Expired = "expired",
 }
 
+export enum ImportState {
+  Created = "created",
+  InProgress = "in_progress",
+  Processed = "processed",
+  Completed = "completed",
+  Errored = "errored",
+  Canceled = "canceled",
+}
+
+export enum ImportTaskState {
+  Created = "created",
+  InProgress = "in_progress",
+  Completed = "completed",
+  Errored = "errored",
+  Canceled = "canceled",
+}
+
 export enum MentionType {
   User = "user",
+  Document = "document",
+  Collection = "collection",
+  Issue = "issue",
+  PullRequest = "pull_request",
 }
 
 export type PublicEnv = {
@@ -80,6 +113,8 @@ export enum IntegrationType {
   Analytics = "analytics",
   /** An integration that maps an Outline user to an external service. */
   LinkedAccount = "linkedAccount",
+  /** An integration that imports documents into Outline. */
+  Import = "import",
 }
 
 export enum IntegrationService {
@@ -90,7 +125,28 @@ export enum IntegrationService {
   Matomo = "matomo",
   Umami = "umami",
   GitHub = "github",
+  Linear = "linear",
+  Notion = "notion",
 }
+
+export type ImportableIntegrationService = Extract<
+  IntegrationService,
+  IntegrationService.Notion
+>;
+
+export const ImportableIntegrationService = {
+  Notion: IntegrationService.Notion,
+} as const;
+
+export type IssueTrackerIntegrationService = Extract<
+  IntegrationService,
+  IntegrationService.GitHub | IntegrationService.Linear
+>;
+
+export const IssueTrackerIntegrationService = {
+  GitHub: IntegrationService.GitHub,
+  Linear: IntegrationService.Linear,
+} as const;
 
 export type UserCreatableIntegrationService = Extract<
   IntegrationService,
@@ -121,37 +177,53 @@ export enum DocumentPermission {
   Admin = "admin",
 }
 
+export enum GroupPermission {
+  Member = "member",
+  Admin = "admin",
+}
+
 export type IntegrationSettings<T> = T extends IntegrationType.Embed
   ? {
-      url: string;
+      url?: string;
       github?: {
         installation: {
           id: number;
           account: { id: number; name: string; avatarUrl: string };
         };
       };
+      linear?: {
+        workspace: { id: string; name: string; key: string; logoUrl?: string };
+      };
     }
   : T extends IntegrationType.Analytics
-  ? { measurementId: string; instanceUrl?: string; scriptName?: string }
-  : T extends IntegrationType.Post
-  ? { url: string; channel: string; channelId: string }
-  : T extends IntegrationType.Command
-  ? { serviceTeamId: string }
-  :
-      | { url: string }
-      | {
-          github?: {
-            installation: {
-              id: number;
-              account: { id?: number; name: string; avatarUrl?: string };
-            };
-          };
-        }
-      | { url: string; channel: string; channelId: string }
-      | { serviceTeamId: string }
-      | { measurementId: string }
-      | { slack: { serviceTeamId: string; serviceUserId: string } }
-      | undefined;
+    ? { measurementId: string; instanceUrl?: string; scriptName?: string }
+    : T extends IntegrationType.Post
+      ? { url: string; channel: string; channelId: string }
+      : T extends IntegrationType.Command
+        ? { serviceTeamId: string }
+        : T extends IntegrationType.Import
+          ? {
+              externalWorkspace: { id: string; name: string; iconUrl?: string };
+            }
+          :
+              | { url: string }
+              | {
+                  github?: {
+                    installation: {
+                      id: number;
+                      account: {
+                        id?: number;
+                        name: string;
+                        avatarUrl?: string;
+                      };
+                    };
+                  };
+                }
+              | { url: string; channel: string; channelId: string }
+              | { serviceTeamId: string }
+              | { measurementId: string }
+              | { slack: { serviceTeamId: string; serviceUserId: string } }
+              | undefined;
 
 export enum UserPreference {
   /** Whether reopening the app should redirect to the last viewed document. */
@@ -164,6 +236,10 @@ export enum UserPreference {
   SeamlessEdit = "seamlessEdit",
   /** Whether documents should start in full-width mode. */
   FullWidthDocuments = "fullWidthDocuments",
+  /** Whether to sort the comments by their order in the document. */
+  SortCommentsByOrderInDocument = "sortCommentsByOrderInDocument",
+  /** Whether smart text replacements should be enabled. */
+  EnableSmartText = "enableSmartText",
 }
 
 export type UserPreferences = { [key in UserPreference]?: boolean };
@@ -177,8 +253,12 @@ export type SourceMetadata = {
   createdByName?: string;
   /** An ID in the external source. */
   externalId?: string;
+  /** Original name in the external source. */
+  externalName?: string;
   /** Whether the item was created through a trial license. */
   trial?: boolean;
+  /** The ID of the original document when this document was duplicated. */
+  originalDocumentId?: string;
 };
 
 export type CustomTheme = {
@@ -211,12 +291,16 @@ export enum TeamPreference {
   MembersCanCreateApiKey = "membersCanCreateApiKey",
   /** Whether members can delete their user account. */
   MembersCanDeleteAccount = "membersCanDeleteAccount",
+  /** Whether notification emails include document and comment content. */
+  PreviewsInEmails = "previewsInEmails",
   /** Whether users can comment on documents. */
   Commenting = "commenting",
   /** The custom theme for the team. */
   CustomTheme = "customTheme",
   /** Side to display the document's table of contents in relation to the main content. */
   TocPosition = "tocPosition",
+  /** Whether to prevent shared documents from being embedded in iframes on external websites. */
+  PreventDocumentEmbedding = "preventDocumentEmbedding",
 }
 
 export type TeamPreferences = {
@@ -226,9 +310,11 @@ export type TeamPreferences = {
   [TeamPreference.MembersCanInvite]?: boolean;
   [TeamPreference.MembersCanCreateApiKey]?: boolean;
   [TeamPreference.MembersCanDeleteAccount]?: boolean;
+  [TeamPreference.PreviewsInEmails]?: boolean;
   [TeamPreference.Commenting]?: boolean;
   [TeamPreference.CustomTheme]?: Partial<CustomTheme>;
   [TeamPreference.TocPosition]?: TOCPosition;
+  [TeamPreference.PreventDocumentEmbedding]?: boolean;
 };
 
 export enum NavigationNodeType {
@@ -258,6 +344,10 @@ export type CollectionSort = {
   direction: "asc" | "desc";
 };
 
+export enum SubscriptionType {
+  Document = "documents.update",
+}
+
 export enum NotificationEventType {
   PublishDocument = "documents.publish",
   UpdateDocument = "documents.update",
@@ -266,6 +356,8 @@ export enum NotificationEventType {
   CreateRevision = "revisions.create",
   CreateCollection = "collections.create",
   CreateComment = "comments.create",
+  ResolveComment = "comments.resolve",
+  ReactionsCreate = "reactions.create",
   MentionedInDocument = "documents.mentioned",
   MentionedInComment = "comments.mentioned",
   InviteAccepted = "emails.invite_accepted",
@@ -280,6 +372,10 @@ export enum NotificationChannelType {
   Chat = "chat",
 }
 
+export type NotificationData = {
+  emoji?: string;
+};
+
 export type NotificationSettings = {
   [event in NotificationEventType]?:
     | {
@@ -288,20 +384,24 @@ export type NotificationSettings = {
     | boolean;
 };
 
-export const NotificationEventDefaults = {
-  [NotificationEventType.PublishDocument]: false,
-  [NotificationEventType.UpdateDocument]: true,
-  [NotificationEventType.CreateCollection]: false,
-  [NotificationEventType.CreateComment]: true,
-  [NotificationEventType.MentionedInDocument]: true,
-  [NotificationEventType.MentionedInComment]: true,
-  [NotificationEventType.InviteAccepted]: true,
-  [NotificationEventType.Onboarding]: true,
-  [NotificationEventType.Features]: true,
-  [NotificationEventType.ExportCompleted]: true,
-  [NotificationEventType.AddUserToDocument]: true,
-  [NotificationEventType.AddUserToCollection]: true,
-};
+export const NotificationEventDefaults: Record<NotificationEventType, boolean> =
+  {
+    [NotificationEventType.PublishDocument]: false,
+    [NotificationEventType.UpdateDocument]: true,
+    [NotificationEventType.CreateCollection]: false,
+    [NotificationEventType.CreateComment]: true,
+    [NotificationEventType.ResolveComment]: true,
+    [NotificationEventType.ReactionsCreate]: true,
+    [NotificationEventType.CreateRevision]: false,
+    [NotificationEventType.MentionedInDocument]: true,
+    [NotificationEventType.MentionedInComment]: true,
+    [NotificationEventType.InviteAccepted]: true,
+    [NotificationEventType.Onboarding]: true,
+    [NotificationEventType.Features]: true,
+    [NotificationEventType.ExportCompleted]: true,
+    [NotificationEventType.AddUserToDocument]: true,
+    [NotificationEventType.AddUserToCollection]: true,
+  };
 
 export enum UnfurlResourceType {
   OEmbed = "oembed",
@@ -329,6 +429,8 @@ export type UnfurlResponse = {
     type: UnfurlResourceType.Mention;
     /** Mentioned user's name */
     name: string;
+    /** Mentioned user's email */
+    email: string | null;
     /** Mentioned user's avatar URL */
     avatarUrl: string | null;
     /** Used to create mentioned user's avatar if no avatar URL provided */
@@ -360,13 +462,18 @@ export type UnfurlResponse = {
     /** Issue title */
     title: string;
     /** Issue description */
-    description: string;
+    description: string | null;
     /** Issue's author */
     author: { name: string; avatarUrl: string };
     /** Issue's labels */
     labels: Array<{ name: string; color: string }>;
     /** Issue's status */
-    state: { name: string; color: string };
+    state: {
+      type?: string;
+      name: string;
+      color: string;
+      completionPercentage?: number;
+    };
     /** Issue's creation time */
     createdAt: string;
   };
@@ -380,11 +487,11 @@ export type UnfurlResponse = {
     /** Pull Request title */
     title: string;
     /** Pull Request description */
-    description: string;
+    description: string | null;
     /** Pull Request author */
     author: { name: string; avatarUrl: string };
     /** Pull Request status */
-    state: { name: string; color: string };
+    state: { name: string; color: string; draft?: boolean };
     /** Pull Request creation time */
     createdAt: string;
   };
@@ -392,6 +499,7 @@ export type UnfurlResponse = {
 
 export enum QueryNotices {
   UnsubscribeDocument = "unsubscribe-document",
+  UnsubscribeCollection = "unsubscribe-collection",
 }
 
 export type JSONValue =
@@ -407,7 +515,7 @@ export type JSONObject = { [x: string]: JSONValue };
 
 export type ProsemirrorData = {
   type: string;
-  content: ProsemirrorData[];
+  content?: ProsemirrorData[];
   text?: string;
   attrs?: JSONObject;
   marks?: {
@@ -459,4 +567,9 @@ export type EmojiVariants = {
   [EmojiSkinTone.Medium]?: Emoji;
   [EmojiSkinTone.MediumDark]?: Emoji;
   [EmojiSkinTone.Dark]?: Emoji;
+};
+
+export type ReactionSummary = {
+  emoji: string;
+  userIds: string[];
 };

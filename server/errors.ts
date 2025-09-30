@@ -32,6 +32,12 @@ export function AuthorizationError(message = "Authorization error") {
   });
 }
 
+export function CSRFError(message = "Authorization error") {
+  return httpErrors(403, message, {
+    id: "csrf_error",
+  });
+}
+
 export function RateLimitExceededError(
   message = "Rate limit exceeded for this operation"
 ) {
@@ -49,7 +55,7 @@ export function InviteRequiredError(
 }
 
 export function DomainNotAllowedError(
-  message = "The domain is not allowed for this team"
+  message = "The domain is not allowed for this workspace"
 ) {
   return httpErrors(403, message, {
     id: "domain_not_allowed",
@@ -199,6 +205,12 @@ export function AuthenticationProviderDisabledError(
     redirectPath,
     id: "authentication_provider_disabled",
   });
+}
+
+export function UnprocessableEntityError(
+  message = "Cannot process the request"
+) {
+  return httpErrors(422, message, { id: "unprocessable_entity" });
 }
 
 export function ClientClosedRequestError(

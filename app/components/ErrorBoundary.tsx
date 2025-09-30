@@ -7,11 +7,15 @@ import { s } from "@shared/styles";
 import { UrlHelper } from "@shared/utils/UrlHelper";
 import Button from "~/components/Button";
 import CenteredContent from "~/components/CenteredContent";
+import Heading from "~/components/Heading";
 import PageTitle from "~/components/PageTitle";
 import Text from "~/components/Text";
 import env from "~/env";
 import Logger from "~/utils/Logger";
 import isCloudHosted from "~/utils/isCloudHosted";
+import Storage from "@shared/utils/Storage";
+import { deleteAllDatabases } from "~/utils/developer";
+import Flex from "./Flex";
 
 type Props = WithTranslation & {
   /** Whether to reload the page if a chunk fails to load. */
@@ -22,6 +26,9 @@ type Props = WithTranslation & {
   component?: React.ComponentType | string;
 };
 
+const ERROR_TRACKING_KEY = "error-boundary-tracking";
+const ERROR_TRACKING_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
 @observer
 class ErrorBoundary extends React.Component<Props> {
   @observable
@@ -29,6 +36,13 @@ class ErrorBoundary extends React.Component<Props> {
 
   @observable
   showDetails = false;
+
+  @observable
+  isRepeatedError = false;
+
+  componentDidMount() {
+    this.checkForPreviousErrors();
+  }
 
   componentDidCatch(error: Error) {
     this.error = error;
@@ -45,8 +59,46 @@ class ErrorBoundary extends React.Component<Props> {
       return;
     }
 
+    this.trackError();
     Logger.error("ErrorBoundary", error);
   }
+
+  private checkForPreviousErrors = () => {
+    try {
+      const stored = Storage.get(ERROR_TRACKING_KEY);
+      if (!stored) {
+        return;
+      }
+
+      const errors: number[] = JSON.parse(stored);
+      const cutoff = Date.now() - ERROR_TRACKING_WINDOW_MS;
+      const recentErrors = errors.filter((timestamp) => timestamp > cutoff);
+
+      this.isRepeatedError = recentErrors.length > 0;
+    } catch (err) {
+      Logger.warn("Failed to parse stored errors for error boundary", { err });
+    }
+  };
+
+  private trackError = () => {
+    try {
+      const stored = Storage.get(ERROR_TRACKING_KEY);
+      const errors: number[] = stored ? JSON.parse(stored) : [];
+      const cutoff = Date.now() - ERROR_TRACKING_WINDOW_MS;
+
+      // Filter out old errors and add current one
+      const updatedErrors = [
+        ...errors.filter((timestamp) => timestamp > cutoff),
+        Date.now(),
+      ];
+
+      Storage.set(ERROR_TRACKING_KEY, JSON.stringify(updatedErrors));
+
+      this.isRepeatedError = updatedErrors.length > 1;
+    } catch (err) {
+      Logger.warn("Failed to track error in error boundary", { err });
+    }
+  };
 
   handleReload = () => {
     window.location.reload();
@@ -58,6 +110,12 @@ class ErrorBoundary extends React.Component<Props> {
 
   handleReportBug = () => {
     window.open(isCloudHosted ? UrlHelper.contact : UrlHelper.github);
+  };
+
+  handleClearCache = async () => {
+    await deleteAllDatabases();
+    Storage.clear();
+    window.location.reload();
   };
 
   render() {
@@ -77,9 +135,9 @@ class ErrorBoundary extends React.Component<Props> {
             {showTitle && (
               <>
                 <PageTitle title={t("Module failed to load")} />
-                <h1>
+                <Heading>
                   <Trans>Loading Failed</Trans>
-                </h1>
+                </Heading>
               </>
             )}
             <Text as="p" type="secondary">
@@ -101,34 +159,51 @@ class ErrorBoundary extends React.Component<Props> {
           {showTitle && (
             <>
               <PageTitle title={t("Something Unexpected Happened")} />
-              <h1>
+              <Heading>
                 <Trans>Something Unexpected Happened</Trans>
-              </h1>
+              </Heading>
             </>
           )}
-          <Text as="p" type="secondary">
-            <Trans
-              defaults="Sorry, an unrecoverable error occurred{{notified}}. Please try reloading the page, it may have been a temporary glitch."
-              values={{
-                notified: isReported
-                  ? ` – ${t("our engineers have been notified")}`
-                  : undefined,
-              }}
-            />
-          </Text>
-          {this.showDetails && <Pre>{error.toString()}</Pre>}
-          <p>
-            <Button onClick={this.handleReload}>{t("Reload")}</Button>{" "}
+
+          {this.isRepeatedError ? (
+            <Text as="p" type="secondary">
+              <Trans>
+                An error has occurred multiple times recently. If it continues
+                please try clearing the cache or using a different browser.
+              </Trans>
+            </Text>
+          ) : (
+            <Text as="p" type="secondary">
+              <Trans
+                defaults="Sorry, an unrecoverable error occurred{{notified}}. Please try reloading the page, it may have been a temporary glitch."
+                values={{
+                  notified: isReported
+                    ? ` – ${t("our engineers have been notified")}`
+                    : undefined,
+                }}
+              />
+            </Text>
+          )}
+          {this.showDetails && <Pre>{error.stack}</Pre>}
+          <Flex gap={8} wrap>
+            {this.isRepeatedError && (
+              <Button onClick={this.handleClearCache}>
+                <Trans>Clear cache + reload</Trans>
+              </Button>
+            )}
+            <Button onClick={this.handleReload} neutral={this.isRepeatedError}>
+              {t("Reload")}
+            </Button>
             {this.showDetails ? (
               <Button onClick={this.handleReportBug} neutral>
-                <Trans>Report a bug</Trans>…
+                <Trans>Report a bug</Trans>
               </Button>
             ) : (
               <Button onClick={this.handleShowDetails} neutral>
                 <Trans>Show detail</Trans>…
               </Button>
             )}
-          </p>
+          </Flex>
         </Component>
       );
     }
@@ -138,7 +213,7 @@ class ErrorBoundary extends React.Component<Props> {
 }
 
 const Pre = styled.pre`
-  background: ${s("secondaryBackground")};
+  background: ${s("backgroundSecondary")};
   padding: 16px;
   border-radius: 4px;
   font-size: 12px;

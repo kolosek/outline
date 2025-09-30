@@ -1,5 +1,6 @@
 import { subMinutes } from "date-fns";
 import JWT from "jsonwebtoken";
+import { FindOptions } from "sequelize";
 import { Team, User } from "@server/models";
 import { AuthenticationError } from "../errors";
 
@@ -17,7 +18,7 @@ export function getJWTPayload(token: string) {
     }
 
     return payload as JWT.JwtPayload;
-  } catch (err) {
+  } catch (_err) {
     throw AuthenticationError("Unable to decode token");
   }
 }
@@ -66,7 +67,7 @@ export async function getUserForJWT(
 
   try {
     JWT.verify(token, user.jwtSecret);
-  } catch (err) {
+  } catch (_err) {
     throw AuthenticationError("Invalid token");
   }
 
@@ -99,9 +100,41 @@ export async function getUserForEmailSigninToken(token: string): Promise<User> {
 
   try {
     JWT.verify(token, user.jwtSecret);
-  } catch (err) {
+  } catch (_err) {
     throw AuthenticationError("Invalid token");
   }
 
   return user;
+}
+
+export async function getDetailsForEmailUpdateToken(
+  token: string,
+  options: FindOptions<User> = {}
+): Promise<{ user: User; email: string }> {
+  const payload = getJWTPayload(token);
+
+  if (payload.type !== "email-update") {
+    throw AuthenticationError("Invalid token");
+  }
+
+  // check the token is within it's expiration time
+  if (payload.createdAt) {
+    if (new Date(payload.createdAt) < subMinutes(new Date(), 10)) {
+      throw AuthenticationError("Expired token");
+    }
+  }
+
+  const email = payload.email;
+  const user = await User.findByPk(payload.id, {
+    rejectOnEmpty: true,
+    ...options,
+  });
+
+  try {
+    JWT.verify(token, user.jwtSecret);
+  } catch (_err) {
+    throw AuthenticationError("Invalid token");
+  }
+
+  return { user, email };
 }

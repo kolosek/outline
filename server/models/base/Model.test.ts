@@ -51,6 +51,7 @@ describe("Model", () => {
       expect(document.changeset.previous.collaboratorIds).toEqual(prev);
     });
   });
+
   describe("batch load", () => {
     it("should return data in batches", async () => {
       const team = await buildTeam();
@@ -72,6 +73,28 @@ describe("Model", () => {
       expect(usersBatch.length).toEqual(2);
       expect(usersBatch[0].length).toEqual(100);
       expect(usersBatch[1].length).toEqual(5);
+    });
+
+    it("should return data in batches with total limit", async () => {
+      const team = await buildTeam();
+      await User.bulkCreate(
+        [...Array(10)].map(() => ({
+          email: faker.internet.email().toLowerCase(),
+          name: faker.person.fullName(),
+          teamId: team.id,
+        }))
+      );
+
+      const usersBatch: User[][] = [];
+
+      await User.findAllInBatches<User>(
+        { where: { teamId: team.id }, batchLimit: 2, totalLimit: 4 },
+        async (foundUsers) => void usersBatch.push(foundUsers)
+      );
+
+      expect(usersBatch.length).toEqual(2);
+      expect(usersBatch[0].length).toEqual(2);
+      expect(usersBatch[1].length).toEqual(2);
     });
   });
 });

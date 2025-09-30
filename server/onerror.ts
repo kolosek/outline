@@ -6,24 +6,14 @@ import Koa from "koa";
 import escape from "lodash/escape";
 import isNil from "lodash/isNil";
 import snakeCase from "lodash/snakeCase";
-import {
-  ValidationError as SequelizeValidationError,
-  EmptyResultError as SequelizeEmptyResultError,
-} from "sequelize";
 import env from "@server/env";
-import {
-  AuthorizationError,
-  ClientClosedRequestError,
-  InternalError,
-  NotFoundError,
-  ValidationError,
-} from "@server/errors";
+import { ClientClosedRequestError, InternalError } from "@server/errors";
 import { requestErrorHandler } from "@server/logging/sentry";
 
 let errorHtmlCache: Buffer | undefined;
 
 export default function onerror(app: Koa) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // oxlint-disable-next-line @typescript-eslint/no-explicit-any
   app.context.onerror = function (err: any) {
     // Don't do anything if there is no error, this allows you to pass `this.onerror` to node-style callbacks.
     if (isNil(err)) {
@@ -32,36 +22,11 @@ export default function onerror(app: Koa) {
 
     err = wrapInNativeError(err);
 
-    if (err instanceof SequelizeValidationError) {
-      if (err.errors && err.errors[0]) {
-        err = ValidationError(
-          `${err.errors[0].message} (${err.errors[0].path})`
-        );
-      } else {
-        err = ValidationError();
-      }
-    }
-
     // Client aborted errors are a 500 by default, but 499 is more appropriate
     if (err instanceof formidable.errors.FormidableError) {
       if (err.internalCode === 1002) {
         err = ClientClosedRequestError();
       }
-    }
-
-    if (
-      err.code === "ENOENT" ||
-      err instanceof SequelizeEmptyResultError ||
-      /Not found/i.test(err.message)
-    ) {
-      err = NotFoundError();
-    }
-
-    if (
-      !(err instanceof AuthorizationError) &&
-      /Authorization error/i.test(err.message)
-    ) {
-      err = AuthorizationError();
     }
 
     // Push only unknown and 500 status errors to sentry
@@ -74,7 +39,7 @@ export default function onerror(app: Koa) {
 
       if (!(err instanceof InternalError)) {
         if (env.ENVIRONMENT === "test") {
-          // eslint-disable-next-line no-console
+          // oxlint-disable-next-line no-console
           console.error(err);
         }
         err = InternalError();
@@ -117,7 +82,7 @@ export default function onerror(app: Koa) {
   return app;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// oxlint-disable-next-line @typescript-eslint/no-explicit-any
 function wrapInNativeError(err: any): Error {
   // When dealing with cross-globals a normal `instanceof` check doesn't work properly.
   // See https://github.com/koajs/koa/issues/1466
@@ -134,8 +99,10 @@ function wrapInNativeError(err: any): Error {
   if (typeof err === "object") {
     try {
       errMsg = JSON.stringify(err);
-      // eslint-disable-next-line no-empty
-    } catch (e) {}
+      // oxlint-disable-next-line no-empty
+    } catch (_err) {
+      // Ignore
+    }
   }
   const newError = InternalError(`Non-error thrown: ${errMsg}`);
   // err maybe an object, try to copy the name, message and stack to the new error instance

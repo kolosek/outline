@@ -1,16 +1,15 @@
 import * as React from "react";
+import useMeasure from "react-use-measure";
 import Frame from "../components/Frame";
-import useComponentSize from "../components/hooks/useComponentSize";
 import { EmbedProps as Props } from ".";
 
 export default function Berrycast({ matches, ...props }: Props) {
   const normalizedUrl = props.attrs.href.replace(/\/$/, "");
-  const ref = React.useRef<HTMLDivElement>(null);
-  const { width } = useComponentSize(ref.current);
+  const [measureRef, { width }] = useMeasure();
 
   return (
     <>
-      <div ref={ref} />
+      <div ref={measureRef} />
       <Frame
         {...props}
         src={`${normalizedUrl}/video-player`}

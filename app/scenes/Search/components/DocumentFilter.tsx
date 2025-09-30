@@ -17,9 +17,9 @@ export function DocumentFilter(props: Props) {
 
   return (
     <div>
-      <Tooltip content={t("Remove document filter")} delay={350}>
+      <Tooltip content={t("Remove document filter")}>
         <StyledButton onClick={props.onClick} icon={<CloseIcon />} neutral>
-          {props.document.title}
+          {props.document.titleWithDefault}
         </StyledButton>
       </Tooltip>
     </div>

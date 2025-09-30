@@ -39,6 +39,7 @@ export interface Props extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
   location?: Location;
   strict?: boolean;
   to: LocationDescriptor;
+  component?: React.ComponentType;
   onBeforeClick?: () => void;
 }
 
@@ -74,7 +75,7 @@ const NavLink = ({
   );
   const { pathname: path } = toLocation;
 
-  const match = path
+  const pathMatch = path
     ? matchPath(currentLocation.pathname, {
         // Regex taken from: https://github.com/pillarjs/path-to-regexp/blob/master/index.js#L202
         path: path.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1"),
@@ -85,7 +86,7 @@ const NavLink = ({
 
   const isActive =
     preActive ??
-    !!(isActiveProp ? isActiveProp(match, currentLocation) : match);
+    !!(isActiveProp ? isActiveProp(pathMatch, currentLocation) : pathMatch);
   const className = isActive
     ? joinClassnames(classNameProp, activeClassName)
     : classNameProp;
@@ -93,15 +94,11 @@ const NavLink = ({
 
   React.useLayoutEffect(() => {
     if (isActive && linkRef.current && scrollIntoViewIfNeeded !== false) {
-      // If the page has an anchor hash then this means we're linking to an
-      // anchor in the document – smooth scrolling the sidebar may the scrolling
-      // to the anchor of the document so we must avoid it.
-      if (!window.location.hash) {
-        scrollIntoView(linkRef.current, {
-          scrollMode: "if-needed",
-          behavior: "auto",
-        });
-      }
+      scrollIntoView(linkRef.current, {
+        scrollMode: "if-needed",
+        behavior: "auto",
+        boundary: (parent) => parent.id !== "sidebar",
+      });
     }
   }, [linkRef, scrollIntoViewIfNeeded, isActive]);
 
@@ -112,8 +109,9 @@ const NavLink = ({
       !rest.target &&
       !event.altKey &&
       !event.metaKey &&
-      !event.ctrlKey,
-    [rest.target]
+      !event.ctrlKey &&
+      !isActive,
+    [rest.target, isActive]
   );
 
   const navigateTo = React.useCallback(() => {
@@ -124,13 +122,11 @@ const NavLink = ({
     }
   }, [to, replace]);
 
-  const handleClick = React.useCallback(
+  const handleMouseDown = React.useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>) => {
       onClick?.(event);
 
       if (shouldFastClick(event)) {
-        event.stopPropagation();
-        event.preventDefault();
         event.currentTarget.focus();
 
         setPreActive(true);
@@ -149,18 +145,23 @@ const NavLink = ({
     setPreActive(undefined);
   }, [currentLocation]);
 
+  const handleKeyDown = React.useCallback(
+    (event: React.KeyboardEvent<HTMLAnchorElement>) => {
+      if (["Enter", " "].includes(event.key)) {
+        navigateTo();
+        event.currentTarget?.blur();
+      }
+    },
+    [navigateTo]
+  );
+
   return (
     <Link
       key={isActive ? "active" : "inactive"}
       ref={linkRef}
-      // onMouseDown={handleClick}
-      onKeyDown={(event) => {
-        if (["Enter", " "].includes(event.key)) {
-          navigateTo();
-          event.currentTarget?.blur();
-        }
-      }}
-      onClick={handleClick}
+      // Note do not use `onPointerDown` here as it makes the mobile sidebar unscrollable
+      onMouseDown={handleMouseDown}
+      onKeyDown={handleKeyDown}
       aria-current={(isActive && ariaCurrent) || undefined}
       className={className}
       style={style}

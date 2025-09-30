@@ -1,9 +1,9 @@
-import addressparser from "addressparser";
-import invariant from "invariant";
+import { EmailAddress } from "addressparser";
 import nodemailer, { Transporter } from "nodemailer";
 import SMTPTransport from "nodemailer/lib/smtp-transport";
 import Oy from "oy-vey";
 import env from "@server/env";
+import { InternalError } from "@server/errors";
 import Logger from "@server/logging/Logger";
 import { trace } from "@server/logging/tracing";
 import { baseStyles } from "./templates/components/EmailLayout";
@@ -12,7 +12,7 @@ const useTestEmailService = env.isDevelopment && !env.SMTP_USERNAME;
 
 type SendMailOptions = {
   to: string;
-  fromName?: string;
+  from: EmailAddress;
   replyTo?: string;
   messageId?: string;
   references?: string[];
@@ -34,7 +34,7 @@ export class Mailer {
   transporter: Transporter | undefined;
 
   constructor() {
-    if (env.SMTP_HOST) {
+    if (env.SMTP_HOST || env.SMTP_SERVICE) {
       this.transporter = nodemailer.createTransport(this.getOptions());
     }
     if (useTestEmailService) {
@@ -66,9 +66,10 @@ export class Mailer {
     dir = "ltr" /* https://www.w3.org/TR/html4/struct/dirlang.html#blocklevel-bidi */,
   }: Oy.CustomTemplateRenderOptions) => {
     if (!title) {
-      throw new Error("`title` is a required option for `renderTemplate`");
-    } else if (!bodyContent) {
-      throw new Error(
+      throw InternalError("`title` is a required option for `renderTemplate`");
+    }
+    if (!bodyContent) {
+      throw InternalError(
         "`bodyContent` is a required option for `renderTemplate`"
       );
     }
@@ -123,11 +124,25 @@ export class Mailer {
   sendMail = async (data: SendMailOptions): Promise<void> => {
     const { transporter } = this;
 
-    if (!transporter) {
-      Logger.info(
+    if (env.isDevelopment) {
+      Logger.debug(
         "email",
-        `Attempted to send email "${data.subject}" to ${data.to} but no transport configured.`
+        [
+          `Sending email:`,
+          ``,
+          `--------------`,
+          `From:      ${data.from.address}`,
+          `To:        ${data.to}`,
+          `Subject:   ${data.subject}`,
+          `Preview:   ${data.previewText}`,
+          `--------------`,
+          ``,
+          data.text,
+        ].join("\n")
       );
+    }
+    if (!transporter) {
+      Logger.warn("No mail transport available");
       return;
     }
 
@@ -143,20 +158,8 @@ export class Mailer {
     try {
       Logger.info("email", `Sending email "${data.subject}" to ${data.to}`);
 
-      invariant(
-        env.SMTP_FROM_EMAIL,
-        "SMTP_FROM_EMAIL is required to send emails"
-      );
-
-      const from = addressparser(env.SMTP_FROM_EMAIL)[0];
-
       const info = await transporter.sendMail({
-        from: data.fromName
-          ? {
-              name: data.fromName,
-              address: from.address,
-            }
-          : env.SMTP_FROM_EMAIL,
+        from: data.from,
         replyTo: data.replyTo ?? env.SMTP_REPLY_EMAIL ?? env.SMTP_FROM_EMAIL,
         to: data.to,
         messageId: data.messageId,
@@ -197,6 +200,17 @@ export class Mailer {
   };
 
   private getOptions(): SMTPTransport.Options {
+    // nodemailer will use the service config to determine host/port
+    if (env.SMTP_SERVICE) {
+      return {
+        service: env.SMTP_SERVICE,
+        auth: {
+          user: env.SMTP_USERNAME,
+          pass: env.SMTP_PASSWORD,
+        },
+      };
+    }
+
     return {
       name: env.SMTP_NAME,
       host: env.SMTP_HOST,
@@ -234,7 +248,7 @@ export class Mailer {
           pass: testAccount.pass,
         },
       };
-    } catch (err) {
+    } catch (_err) {
       return undefined;
     }
   }

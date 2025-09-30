@@ -11,19 +11,17 @@ import {
   UserRole,
 } from "@shared/types";
 import type { NotificationSettings } from "@shared/types";
+import { locales } from "@shared/utils/date";
 import { client } from "~/utils/ApiClient";
 import Document from "./Document";
 import Group from "./Group";
 import UserMembership from "./UserMembership";
 import ParanoidModel from "./base/ParanoidModel";
 import Field from "./decorators/Field";
+import { Searchable } from "./interfaces/Searchable";
 
-class User extends ParanoidModel {
+class User extends ParanoidModel implements Searchable {
   static modelName = "User";
-
-  @Field
-  @observable
-  id: string;
 
   @Field
   @observable
@@ -39,7 +37,7 @@ class User extends ParanoidModel {
 
   @Field
   @observable
-  language: string;
+  language: keyof typeof locales;
 
   @Field
   @observable
@@ -48,6 +46,10 @@ class User extends ParanoidModel {
   @Field
   @observable
   notificationSettings: NotificationSettings;
+
+  @Field
+  @observable
+  timezone?: string;
 
   @observable
   email: string;
@@ -60,6 +62,11 @@ class User extends ParanoidModel {
 
   @observable
   isSuspended: boolean;
+
+  @computed
+  get searchContent(): string[] {
+    return [this.name, this.email].filter(Boolean);
+  }
 
   @computed
   get initial(): string {
@@ -130,7 +137,7 @@ class User extends ParanoidModel {
 
   /**
    * Returns the direct memberships that this user has to documents. Documents that the
-   * user already has access to through a collection and trashed documents are not included.
+   * user already has access to through a collection, archived, and trashed documents are not included.
    *
    * @returns A list of user memberships
    */
@@ -146,7 +153,7 @@ class User extends ParanoidModel {
         const policy = document?.collectionId
           ? policies.get(document.collectionId)
           : undefined;
-        return !policy?.abilities?.readDocument && !document?.isDeleted;
+        return !policy?.abilities?.readDocument && !!document?.isActive;
       });
   }
 

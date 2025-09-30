@@ -1,7 +1,7 @@
 import * as React from "react";
 import { DocumentPermission } from "@shared/types";
-import { Document, UserMembership } from "@server/models";
-import BaseEmail, { EmailProps } from "./BaseEmail";
+import { Document, GroupMembership, UserMembership } from "@server/models";
+import BaseEmail, { EmailMessageCategory, EmailProps } from "./BaseEmail";
 import Body from "./components/Body";
 import Button from "./components/Button";
 import EmailTemplate from "./components/EmailLayout";
@@ -11,13 +11,14 @@ import Heading from "./components/Heading";
 type InputProps = EmailProps & {
   userId: string;
   documentId: string;
+  membershipId?: string;
   actorName: string;
   teamUrl: string;
 };
 
 type BeforeSend = {
   document: Document;
-  membership: UserMembership;
+  membership: UserMembership | GroupMembership;
 };
 
 type Props = InputProps & BeforeSend;
@@ -29,18 +30,24 @@ export default class DocumentSharedEmail extends BaseEmail<
   InputProps,
   BeforeSend
 > {
-  protected async beforeSend({ documentId, userId }: InputProps) {
+  protected get category() {
+    return EmailMessageCategory.Notification;
+  }
+
+  protected async beforeSend({ documentId, membershipId }: InputProps) {
+    if (!membershipId) {
+      return false;
+    }
+
     const document = await Document.unscoped().findByPk(documentId);
     if (!document) {
       return false;
     }
 
-    const membership = await UserMembership.findOne({
-      where: {
-        documentId,
-        userId,
-      },
-    });
+    const membership =
+      (await UserMembership.findByPk(membershipId)) ??
+      (await GroupMembership.findByPk(membershipId));
+
     if (!membership) {
       return false;
     }
@@ -49,7 +56,7 @@ export default class DocumentSharedEmail extends BaseEmail<
   }
 
   protected subject({ actorName, document }: Props) {
-    return `${actorName} shared “${document.title}” with you`;
+    return `${actorName} shared “${document.titleWithDefault}” with you`;
   }
 
   protected preview({ actorName }: Props): string {
@@ -62,7 +69,7 @@ export default class DocumentSharedEmail extends BaseEmail<
 
   protected renderAsText({ actorName, teamUrl, document }: Props): string {
     return `
-${actorName} shared “${document.title}” with you.
+${actorName} shared “${document.titleWithDefault}” with you.
 
 View Document: ${teamUrl}${document.path}
 `;
@@ -83,10 +90,10 @@ View Document: ${teamUrl}${document.path}
         <Header />
 
         <Body>
-          <Heading>{document.title}</Heading>
+          <Heading>{document.titleWithDefault}</Heading>
           <p>
             {actorName} invited you to {permission} the{" "}
-            <a href={documentUrl}>{document.title}</a> document.
+            <a href={documentUrl}>{document.titleWithDefault}</a> document.
           </p>
           <p>
             <Button href={documentUrl}>View Document</Button>

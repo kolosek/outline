@@ -1,10 +1,9 @@
+import { createContext } from "@server/context";
 import { sequelize } from "@server/storage/database";
 import { buildDocument, buildUser } from "@server/test/factories";
 import documentDuplicator from "./documentDuplicator";
 
 describe("documentDuplicator", () => {
-  const ip = "127.0.0.1";
-
   it("should duplicate existing document", async () => {
     const user = await buildUser();
     const original = await buildDocument({
@@ -16,9 +15,8 @@ describe("documentDuplicator", () => {
       documentDuplicator({
         document: original,
         collection: original.collection,
-        transaction,
         user,
-        ip,
+        ctx: createContext({ user, transaction }),
       })
     );
 
@@ -43,9 +41,8 @@ describe("documentDuplicator", () => {
         document: original,
         collection: original.collection,
         title: "New title",
-        transaction,
         user,
-        ip,
+        ctx: createContext({ user, transaction }),
       })
     );
 
@@ -77,9 +74,8 @@ describe("documentDuplicator", () => {
         document: original,
         collection: original.collection,
         user,
-        transaction,
         recursive: true,
-        ip,
+        ctx: createContext({ user, transaction }),
       })
     );
 
@@ -97,10 +93,9 @@ describe("documentDuplicator", () => {
       documentDuplicator({
         document: original,
         collection: original.collection,
-        transaction,
         publish: false,
         user,
-        ip,
+        ctx: createContext({ user, transaction }),
       })
     );
 
@@ -110,5 +105,71 @@ describe("documentDuplicator", () => {
     expect(response[0].icon).toEqual(original.icon);
     expect(response[0].color).toEqual(original.color);
     expect(response[0].publishedAt).toBeNull();
+  });
+
+  it("should set originalDocumentId in sourceMetadata when duplicating", async () => {
+    const user = await buildUser();
+    const original = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+      sourceMetadata: { fileName: "test.md", externalId: "ext123" },
+    });
+
+    const response = await sequelize.transaction((transaction) =>
+      documentDuplicator({
+        document: original,
+        collection: original.collection,
+        user,
+        ctx: createContext({ user, transaction }),
+      })
+    );
+
+    expect(response).toHaveLength(1);
+    expect(response[0].sourceMetadata).toEqual({
+      fileName: "test.md",
+      externalId: "ext123",
+      originalDocumentId: original.id,
+    });
+  });
+
+  it("should set originalDocumentId for child documents when duplicating recursively", async () => {
+    const user = await buildUser();
+    const original = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+    });
+
+    const childDocument = await buildDocument({
+      userId: user.id,
+      teamId: user.teamId,
+      parentDocumentId: original.id,
+      collection: original.collection,
+      sourceMetadata: { fileName: "child.md" },
+    });
+
+    const response = await sequelize.transaction((transaction) =>
+      documentDuplicator({
+        document: original,
+        collection: original.collection,
+        user,
+        recursive: true,
+        ctx: createContext({ user, transaction }),
+      })
+    );
+
+    expect(response).toHaveLength(2);
+
+    // Check parent document
+    const duplicatedParent = response.find((doc) => !doc.parentDocumentId);
+    expect(duplicatedParent?.sourceMetadata?.originalDocumentId).toEqual(
+      original.id
+    );
+
+    // Check child document
+    const duplicatedChild = response.find((doc) => doc.parentDocumentId);
+    expect(duplicatedChild?.sourceMetadata?.originalDocumentId).toEqual(
+      childDocument.id
+    );
+    expect(duplicatedChild?.sourceMetadata?.fileName).toEqual("child.md");
   });
 });

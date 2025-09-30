@@ -1,6 +1,6 @@
 import dns from "dns";
 import Router from "koa-router";
-import { UnfurlResourceType } from "@shared/types";
+import { MentionType, UnfurlResourceType } from "@shared/types";
 import { getBaseDomain, parseDomain } from "@shared/utils/domains";
 import parseDocumentSlug from "@shared/utils/parseDocumentSlug";
 import parseMentionUrl from "@shared/utils/parseMentionUrl";
@@ -10,7 +10,7 @@ import auth from "@server/middlewares/authentication";
 import { rateLimiter } from "@server/middlewares/rateLimiter";
 import validate from "@server/middlewares/validate";
 import { Document, Share, Team, User } from "@server/models";
-import { authorize } from "@server/policies";
+import { authorize, can } from "@server/policies";
 import presentUnfurl from "@server/presenters/unfurl";
 import { APIContext, Unfurl } from "@server/types";
 import { CacheHelper } from "@server/utils/CacheHelper";
@@ -36,28 +36,34 @@ router.post(
       if (!documentId) {
         throw ValidationError("Document ID is required to unfurl a mention");
       }
-      const { modelId: userId } = parseMentionUrl(url);
+      const { modelId, mentionType } = parseMentionUrl(url);
 
-      const [user, document] = await Promise.all([
-        User.findByPk(userId),
-        Document.findByPk(documentId, {
-          userId: actor.id,
-        }),
-      ]);
-      if (!user) {
-        throw NotFoundError("Mentioned user does not exist");
-      }
-      if (!document) {
-        throw NotFoundError("Document does not exist");
-      }
-      authorize(actor, "read", user);
-      authorize(actor, "read", document);
+      // TODO: Add support for other mention types
+      if (mentionType === MentionType.User) {
+        const [user, document] = await Promise.all([
+          User.findByPk(modelId),
+          Document.findByPk(documentId, {
+            userId: actor.id,
+          }),
+        ]);
+        if (!user) {
+          throw NotFoundError("Mentioned user does not exist");
+        }
+        if (!document) {
+          throw NotFoundError("Document does not exist");
+        }
+        authorize(actor, "read", user);
+        authorize(actor, "read", document);
 
-      ctx.body = await presentUnfurl({
-        type: UnfurlResourceType.Mention,
-        user,
-        document,
-      });
+        ctx.body = await presentUnfurl(
+          {
+            type: UnfurlResourceType.Mention,
+            user,
+            document,
+          },
+          { includeEmail: !!can(actor, "readEmail", user) }
+        );
+      }
       return;
     }
 
@@ -92,11 +98,12 @@ router.post(
     }
 
     for (const plugin of plugins) {
-      const data = await plugin.value.unfurl(url, actor);
-      if (data) {
-        if ("error" in data) {
+      const unfurl = await plugin.value.unfurl(url, actor);
+      if (unfurl) {
+        if ("error" in unfurl) {
           return (ctx.response.status = 204);
         } else {
+          const data = unfurl as Unfurl;
           await CacheHelper.setData(
             CacheHelper.getUnfurlKey(actor.teamId, url),
             data,

@@ -10,15 +10,17 @@ type Props = {
 };
 
 export default class CleanupDeletedDocumentsTask extends BaseTask<Props> {
-  static cron = TaskSchedule.Daily;
+  static cron = TaskSchedule.Hour;
 
   public async perform({ limit }: Props) {
     Logger.info(
       "task",
       `Permanently destroying upto ${limit} documents older than 30 days…`
     );
-    const documents = await Document.scope("withDrafts").findAll({
-      attributes: ["id", "teamId", "content", "text", "deletedAt"],
+    const documents = await Document.scope([
+      "withDrafts",
+      "withoutState",
+    ]).findAll({
       where: {
         deletedAt: {
           [Op.lt]: subDays(new Date(), 30),

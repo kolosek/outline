@@ -4,18 +4,13 @@ import styled, { useTheme, css } from "styled-components";
 import breakpoint from "styled-components-breakpoint";
 import EventBoundary from "@shared/components/EventBoundary";
 import { s } from "@shared/styles";
-import { NavigationNode } from "@shared/types";
+import { isMobile } from "@shared/utils/browser";
 import NudeButton from "~/components/NudeButton";
 import { UnreadBadge } from "~/components/UnreadBadge";
-import useUnmount from "~/hooks/useUnmount";
+import useClickIntent from "~/hooks/useClickIntent";
 import { undraggableOnDesktop } from "~/styles";
 import Disclosure from "./Disclosure";
 import NavLink, { Props as NavLinkProps } from "./NavLink";
-
-export type DragObject = NavigationNode & {
-  depth: number;
-  collectionId: string;
-};
 
 type Props = Omit<NavLinkProps, "to"> & {
   to?: LocationDescriptor;
@@ -43,6 +38,10 @@ const activeDropStyle = {
   fontWeight: 600,
 };
 
+const preventDefault = (ev: React.MouseEvent) => {
+  ev.preventDefault();
+};
+
 function SidebarLink(
   {
     icon,
@@ -67,8 +66,8 @@ function SidebarLink(
   }: Props,
   ref: React.RefObject<HTMLAnchorElement>
 ) {
-  const timer = React.useRef<number>();
   const theme = useTheme();
+  const { handleMouseEnter, handleMouseLeave } = useClickIntent(onClickIntent);
   const style = React.useMemo(
     () => ({
       paddingLeft: `${(depth || 0) * 16 + 12}px`,
@@ -78,35 +77,12 @@ function SidebarLink(
 
   const activeStyle = React.useMemo(
     () => ({
-      fontWeight: 600,
       color: theme.text,
       background: theme.sidebarActiveBackground,
       ...style,
     }),
     [theme.text, theme.sidebarActiveBackground, style]
   );
-
-  const handleMouseEnter = React.useCallback(() => {
-    if (timer.current) {
-      clearTimeout(timer.current);
-    }
-
-    if (onClickIntent) {
-      timer.current = window.setTimeout(onClickIntent, 100);
-    }
-  }, [onClickIntent]);
-
-  const handleMouseLeave = React.useCallback(() => {
-    if (timer.current) {
-      clearTimeout(timer.current);
-    }
-  }, []);
-
-  useUnmount(() => {
-    if (timer.current) {
-      clearTimeout(timer.current);
-    }
-  });
 
   return (
     <>
@@ -132,7 +108,8 @@ function SidebarLink(
           {expanded !== undefined && (
             <Disclosure
               expanded={expanded}
-              onClick={onDisclosureClick}
+              onMouseDown={onDisclosureClick}
+              onClick={preventDefault}
               root={depth === 0}
               tabIndex={-1}
             />
@@ -202,10 +179,10 @@ const Link = styled(NavLink)<{
   display: flex;
   position: relative;
   text-overflow: ellipsis;
-  padding: 6px 16px;
+  font-weight: 475;
+  padding: ${isMobile() ? 12 : 6}px 16px;
   border-radius: 4px;
   min-height: 32px;
-  transition: background 50ms, color 50ms;
   user-select: none;
   background: ${(props) =>
     props.$isActiveDrop ? props.theme.slateDark : "inherit"};
@@ -295,7 +272,6 @@ const Link = styled(NavLink)<{
 const Label = styled.div`
   position: relative;
   width: 100%;
-  max-height: 4.8em;
   line-height: 24px;
 
   * {

@@ -1,10 +1,11 @@
 /* global File Promise */
 import { PluginSimple } from "markdown-it";
+import { observable } from "mobx";
+import { Observer } from "mobx-react";
 import { darken, transparentize } from "polished";
 import { baseKeymap } from "prosemirror-commands";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
-import { redo, undo } from "prosemirror-history";
 import { inputRules, InputRule } from "prosemirror-inputrules";
 import { keymap } from "prosemirror-keymap";
 import { MarkdownParser } from "prosemirror-markdown";
@@ -38,20 +39,22 @@ import Mark from "@shared/editor/marks/Mark";
 import { basicExtensions as extensions } from "@shared/editor/nodes";
 import Node from "@shared/editor/nodes/Node";
 import ReactNode from "@shared/editor/nodes/ReactNode";
-import { EventType } from "@shared/editor/types";
+import { ComponentProps } from "@shared/editor/types";
 import { ProsemirrorData, UserPreferences } from "@shared/types";
 import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
 import EventEmitter from "@shared/utils/events";
+import Document from "~/models/Document";
 import Flex from "~/components/Flex";
 import { PortalContext } from "~/components/Portal";
 import { Dictionary } from "~/hooks/useDictionary";
+import { Properties } from "~/types";
 import Logger from "~/utils/Logger";
 import ComponentView from "./components/ComponentView";
 import EditorContext from "./components/EditorContext";
-import { SearchResult } from "./components/LinkEditor";
-import LinkToolbar from "./components/LinkToolbar";
+import { NodeViewRenderer } from "./components/NodeViewRenderer";
 import SelectionToolbar from "./components/SelectionToolbar";
 import WithTheme from "./components/WithTheme";
+import Lightbox from "~/components/Lightbox";
 
 export type Props = {
   /** An optional identifier for the editor context. It is used to persist local settings */
@@ -90,6 +93,10 @@ export type Props = {
   scrollTo?: string;
   /** Callback for handling uploaded images, should return the url of uploaded file */
   uploadFile?: (file: File) => Promise<string>;
+  /** Callback when prosemirror nodes are initialized on document mount. */
+  onInit?: () => void;
+  /** Callback when prosemirror nodes are destroyed on document unmount. */
+  onDestroy?: () => void;
   /** Callback when editor is blurred, as native input */
   onBlur?: () => void;
   /** Callback when editor is focused, as native input */
@@ -111,13 +118,11 @@ export type Props = {
   /** Callback when a file upload ends */
   onFileUploadStop?: () => void;
   /** Callback when a link is created, should return url to created document */
-  onCreateLink?: (title: string) => Promise<string>;
-  /** Callback when user searches for documents from link insert interface */
-  onSearchLink?: (term: string) => Promise<SearchResult[]>;
+  onCreateLink?: (params: Properties<Document>) => Promise<string>;
   /** Callback when user clicks on any link in the document */
   onClickLink: (
     href: string,
-    event: MouseEvent | React.MouseEvent<HTMLButtonElement>
+    event?: MouseEvent | React.MouseEvent<HTMLButtonElement>
   ) => void;
   /** Callback when user presses any key with document focused */
   onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
@@ -141,8 +146,8 @@ type State = {
   isEditorFocused: boolean;
   /** If the toolbar for a text selection is visible */
   selectionToolbarOpen: boolean;
-  /** If the insert link toolbar is visible */
-  linkToolbarOpen: boolean;
+  /** Position of image in doc that's being currently viewed in Lightbox */
+  activeLightboxImgPos: number | null;
 };
 
 /**
@@ -172,9 +177,10 @@ export class Editor extends React.PureComponent<
     isRTL: false,
     isEditorFocused: false,
     selectionToolbarOpen: false,
-    linkToolbarOpen: false,
+    activeLightboxImgPos: null,
   };
 
+  isInitialized = false;
   isBlurred = true;
   extensions: ExtensionManager;
   elementRef = React.createRef<HTMLDivElement>();
@@ -192,17 +198,13 @@ export class Editor extends React.PureComponent<
   };
 
   widgets: { [name: string]: (props: WidgetProps) => React.ReactElement };
+  renderers = observable.set<NodeViewRenderer<ComponentProps>>();
   nodes: { [name: string]: NodeSpec };
   marks: { [name: string]: MarkSpec };
   commands: Record<string, CommandFactory>;
   rulePlugins: PluginSimple[];
   events = new EventEmitter();
   mutationObserver?: MutationObserver;
-
-  public constructor(props: Props & ThemeProps<DefaultTheme>) {
-    super(props);
-    this.events.on(EventType.LinkToolbarOpen, this.handleOpenLinkToolbar);
-  }
 
   /**
    * We use componentDidMount instead of constructor as the init method requires
@@ -240,6 +242,12 @@ export class Editor extends React.PureComponent<
         ...this.view.props,
         editable: () => !this.props.readOnly,
       });
+
+      // NodeView will not automatically render when editable changes so we must trigger an update
+      // manually, see: https://discuss.prosemirror.net/t/re-render-custom-nodeview-when-view-editable-changes/6441
+      Array.from(this.renderers).forEach((view) =>
+        view.setProp("isEditable", !this.props.readOnly)
+      );
     }
 
     if (this.props.scrollTo && this.props.scrollTo !== prevProps.scrollTo) {
@@ -259,7 +267,6 @@ export class Editor extends React.PureComponent<
     if (
       !this.isBlurred &&
       !this.state.isEditorFocused &&
-      !this.state.linkToolbarOpen &&
       !this.state.selectionToolbarOpen
     ) {
       this.isBlurred = true;
@@ -268,9 +275,7 @@ export class Editor extends React.PureComponent<
 
     if (
       this.isBlurred &&
-      (this.state.isEditorFocused ||
-        this.state.linkToolbarOpen ||
-        this.state.selectionToolbarOpen)
+      (this.state.isEditorFocused || this.state.selectionToolbarOpen)
     ) {
       this.isBlurred = false;
       this.props.onFocus?.();
@@ -281,6 +286,7 @@ export class Editor extends React.PureComponent<
     window.removeEventListener("theme-changed", this.dispatchThemeChanged);
     this.view?.destroy();
     this.mutationObserver?.disconnect();
+    this.handleEditorDestroy();
   }
 
   private init() {
@@ -445,7 +451,7 @@ export class Editor extends React.PureComponent<
           step.mark.type.name === this.schema.marks.comment.name
       );
 
-    const self = this; // eslint-disable-line
+    const self = this; // oxlint-disable-line
     const view = new EditorView(this.elementRef.current, {
       handleDOMEvents: {
         blur: this.handleEditorBlur,
@@ -480,6 +486,8 @@ export class Editor extends React.PureComponent<
           self.handleChange();
         }
 
+        self.handleEditorInit();
+
         self.calculateDir();
 
         // Because Prosemirror and React are not linked we must tell React that
@@ -490,6 +498,7 @@ export class Editor extends React.PureComponent<
 
     // Tell third-party libraries and screen-readers that this is an input
     view.dom.setAttribute("role", "textbox");
+    view.dom.setAttribute("aria-label", "Editor content");
 
     return view;
   }
@@ -499,16 +508,28 @@ export class Editor extends React.PureComponent<
       return;
     }
 
+    function isVisible(element: HTMLElement | null) {
+      for (let e = element; e; e = e.parentElement) {
+        const s = getComputedStyle(e);
+        if (s.display === "none" || s.opacity === "0") {
+          return false;
+        }
+      }
+      return true;
+    }
+
     try {
       this.mutationObserver?.disconnect();
       this.mutationObserver = observe(
         hash,
         (element) => {
-          element.scrollIntoView();
+          if (isVisible(element)) {
+            element.scrollIntoView();
+          }
         },
         this.elementRef.current || undefined
       );
-    } catch (err) {
+    } catch (_err) {
       // querySelector will throw an error if the hash begins with a number
       // or contains a period. This is protected against now by safeSlugify
       // however previous links may be in the wild.
@@ -599,20 +620,6 @@ export class Editor extends React.PureComponent<
     );
 
   /**
-   * Undo the last change in the editor.
-   *
-   * @returns True if the undo was successful
-   */
-  public undo = () => undo(this.view.state, this.view.dispatch, this.view);
-
-  /**
-   * Redo the last change in the editor.
-   *
-   * @returns True if the change was successful
-   */
-  public redo = () => redo(this.view.state, this.view.dispatch, this.view);
-
-  /**
    * Returns true if the trimmed content of the editor is an empty string.
    *
    * @returns True if the editor is empty
@@ -624,8 +631,7 @@ export class Editor extends React.PureComponent<
    *
    * @returns A list of headings in the document
    */
-  public getHeadings = () =>
-    ProsemirrorHelper.getHeadings(this.view.state.doc, this.schema);
+  public getHeadings = () => ProsemirrorHelper.getHeadings(this.view.state.doc);
 
   /**
    * Return the images in the current editor.
@@ -680,7 +686,10 @@ export class Editor extends React.PureComponent<
    * @param commentId The id of the comment to remove
    * @param attrs The attributes to update
    */
-  public updateComment = (commentId: string, attrs: { resolved: boolean }) => {
+  public updateComment = (
+    commentId: string,
+    attrs: { resolved?: boolean; draft?: boolean }
+  ) => {
     const { state, dispatch } = this.view;
     const tr = state.tr;
 
@@ -708,6 +717,13 @@ export class Editor extends React.PureComponent<
     dispatch(tr);
   };
 
+  public updateActiveLightbox = (pos: number | null) => {
+    this.setState((state) => ({
+      ...state,
+      activeLightboxImgPos: pos,
+    }));
+  };
+
   /**
    * Return the plain text content of the current editor.
    *
@@ -715,13 +731,8 @@ export class Editor extends React.PureComponent<
    */
   public getPlainText = () => {
     const { doc } = this.view.state;
-    const textSerializers = Object.fromEntries(
-      Object.entries(this.schema.nodes)
-        .filter(([, node]) => node.spec.toPlainText)
-        .map(([name, node]) => [name, node.spec.toPlainText])
-    );
 
-    return textBetween(doc, 0, doc.content.size, textSerializers);
+    return textBetween(doc, 0, doc.content.size);
   };
 
   private dispatchThemeChanged = (event: CustomEvent) => {
@@ -736,6 +747,22 @@ export class Editor extends React.PureComponent<
     this.props.onChange((asString = true, trim = false) =>
       this.view ? this.value(asString, trim) : undefined
     );
+  };
+
+  private handleEditorInit = () => {
+    if (!this.props.onInit || this.isInitialized) {
+      return;
+    }
+
+    this.props.onInit();
+    this.isInitialized = true;
+  };
+
+  private handleEditorDestroy = () => {
+    if (!this.props.onDestroy) {
+      return;
+    }
+    this.props.onDestroy();
   };
 
   private handleEditorBlur = () => {
@@ -765,25 +792,8 @@ export class Editor extends React.PureComponent<
     }));
   };
 
-  private handleOpenLinkToolbar = () => {
-    if (this.state.selectionToolbarOpen) {
-      return;
-    }
-    this.setState((state) => ({
-      ...state,
-      linkToolbarOpen: true,
-    }));
-  };
-
-  private handleCloseLinkToolbar = () => {
-    this.setState((state) => ({
-      ...state,
-      linkToolbarOpen: false,
-    }));
-  };
-
   public render() {
-    const { dir, readOnly, canUpdate, grow, style, className, onKeyDown } =
+    const { readOnly, canUpdate, grow, style, className, onKeyDown } =
       this.props;
     const { isRTL } = this.state;
 
@@ -800,7 +810,6 @@ export class Editor extends React.PureComponent<
             column
           >
             <EditorContainer
-              dir={dir}
               rtl={isRTL}
               grow={grow}
               readOnly={readOnly}
@@ -808,6 +817,7 @@ export class Editor extends React.PureComponent<
               focusedCommentId={this.props.focusedCommentId}
               userId={this.props.userId}
               editorStyle={this.props.editorStyle}
+              commenting={!!this.props.onClickCommentMark}
               ref={this.elementRef}
               lang=""
             />
@@ -820,25 +830,25 @@ export class Editor extends React.PureComponent<
                 isTemplate={this.props.template === true}
                 onOpen={this.handleOpenSelectionToolbar}
                 onClose={this.handleCloseSelectionToolbar}
-                onSearchLink={this.props.onSearchLink}
                 onClickLink={this.props.onClickLink}
-                onCreateLink={this.props.onCreateLink}
-              />
-            )}
-            {!readOnly && this.view && this.marks.link && (
-              <LinkToolbar
-                isActive={this.state.linkToolbarOpen}
-                onCreateLink={this.props.onCreateLink}
-                onSearchLink={this.props.onSearchLink}
-                onClickLink={this.props.onClickLink}
-                onClose={this.handleCloseLinkToolbar}
               />
             )}
             {this.widgets &&
               Object.values(this.widgets).map((Widget, index) => (
                 <Widget key={String(index)} rtl={isRTL} readOnly={readOnly} />
               ))}
+            <Observer>
+              {() => (
+                <>{Array.from(this.renderers).map((view) => view.content)}</>
+              )}
+            </Observer>
           </Flex>
+          {this.state.activeLightboxImgPos && (
+            <Lightbox
+              onUpdate={this.updateActiveLightbox}
+              activePos={this.state.activeLightboxImgPos}
+            />
+          )}
         </EditorContext.Provider>
       </PortalContext.Provider>
     );
@@ -861,7 +871,7 @@ const EditorContainer = styled(Styles)<{
   ${(props) =>
     props.userId &&
     css`
-      .mention[data-id=${props.userId}] {
+      .mention[data-id="${props.userId}"] {
         color: ${props.theme.textHighlightForeground};
         background: ${props.theme.textHighlight};
 

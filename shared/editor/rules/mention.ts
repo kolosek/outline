@@ -1,6 +1,4 @@
-import MarkdownIt from "markdown-it";
-import StateCore from "markdown-it/lib/rules_core/state_core";
-import Token from "markdown-it/lib/token";
+import MarkdownIt, { Token, StateCore } from "markdown-it";
 
 function renderMention(tokens: Token[], idx: number) {
   const id = tokens[idx].attrGet("id");
@@ -59,12 +57,12 @@ function parseMentions(state: StateCore) {
       precToken.content = precToken.content.slice(0, -1);
 
       // href must be present, otherwise the hrefRE test in canChunkComposeMentionToken would've failed
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      // oxlint-disable-next-line @typescript-eslint/no-non-null-assertion
       const href = openToken.attrs![0][1];
       const matches = href.match(hrefRE);
       const [id, mType, mId] = matches!.slice(1);
 
-      const mentionToken = new Token("mention", "", 0);
+      const mentionToken = new state.Token("mention", "", 0);
       mentionToken.attrSet("id", id);
       mentionToken.attrSet("type", mType);
       mentionToken.attrSet("modelId", mId);

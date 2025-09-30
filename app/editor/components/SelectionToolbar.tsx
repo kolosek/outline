@@ -1,15 +1,15 @@
 import some from "lodash/some";
 import { EditorState, NodeSelection, TextSelection } from "prosemirror-state";
+import { CellSelection } from "prosemirror-tables";
 import * as React from "react";
-import createAndInsertLink from "@shared/editor/commands/createAndInsertLink";
 import filterExcessSeparators from "@shared/editor/lib/filterExcessSeparators";
 import { getMarkRange } from "@shared/editor/queries/getMarkRange";
 import { isInCode } from "@shared/editor/queries/isInCode";
+import { isInNotice } from "@shared/editor/queries/isInNotice";
 import { isMarkActive } from "@shared/editor/queries/isMarkActive";
 import { isNodeActive } from "@shared/editor/queries/isNodeActive";
 import { getColumnIndex, getRowIndex } from "@shared/editor/queries/table";
 import { MenuItem } from "@shared/editor/types";
-import { creatingUrlPrefix } from "@shared/utils/urls";
 import useBoolean from "~/hooks/useBoolean";
 import useDictionary from "~/hooks/useDictionary";
 import useEventListener from "~/hooks/useEventListener";
@@ -20,13 +20,16 @@ import getCodeMenuItems from "../menus/code";
 import getDividerMenuItems from "../menus/divider";
 import getFormattingMenuItems from "../menus/formatting";
 import getImageMenuItems from "../menus/image";
+import getNoticeMenuItems from "../menus/notice";
 import getReadOnlyMenuItems from "../menus/readOnly";
 import getTableMenuItems from "../menus/table";
+import getTableCellMenuItems from "../menus/tableCell";
 import getTableColMenuItems from "../menus/tableCol";
 import getTableRowMenuItems from "../menus/tableRow";
 import { useEditor } from "./EditorContext";
+import { EmbedLinkEditor } from "./EmbedLinkEditor";
 import FloatingToolbar from "./FloatingToolbar";
-import LinkEditor, { SearchResult } from "./LinkEditor";
+import LinkEditor from "./LinkEditor";
 import ToolbarMenu from "./ToolbarMenu";
 
 type Props = {
@@ -37,12 +40,10 @@ type Props = {
   canUpdate?: boolean;
   onOpen: () => void;
   onClose: () => void;
-  onSearchLink?: (term: string) => Promise<SearchResult[]>;
   onClickLink: (
     href: string,
     event: MouseEvent | React.MouseEvent<HTMLButtonElement>
   ) => void;
-  onCreateLink?: (title: string) => Promise<string>;
 };
 
 function useIsActive(state: EditorState) {
@@ -59,6 +60,10 @@ function useIsActive(state: EditorState) {
     return true;
   }
 
+  if (isInNotice(state) && selection.from > 0) {
+    return true;
+  }
+
   if (!selection || selection.empty) {
     return false;
   }
@@ -67,7 +72,7 @@ function useIsActive(state: EditorState) {
   }
   if (
     selection instanceof NodeSelection &&
-    ["image", "attachment"].includes(selection.node.type.name)
+    ["image", "attachment", "embed"].includes(selection.node.type.name)
   ) {
     return true;
   }
@@ -149,40 +154,6 @@ export default function SelectionToolbar(props: Props) {
     };
   }, [isActive, previousIsActive, readOnly, view]);
 
-  const handleOnCreateLink = async (
-    title: string,
-    nested?: boolean
-  ): Promise<void> => {
-    const { onCreateLink } = props;
-
-    if (!onCreateLink) {
-      return;
-    }
-
-    const { dispatch, state } = view;
-    const { from, to } = state.selection;
-    if (from === to) {
-      // Do not display a selection toolbar for collapsed selections
-      return;
-    }
-
-    const href = `${creatingUrlPrefix}${title}…`;
-    const markType = state.schema.marks.link;
-
-    // Insert a placeholder link
-    dispatch(
-      view.state.tr
-        .removeMark(from, to, markType)
-        .addMark(from, to, markType.create({ href }))
-    );
-
-    return createAndInsertLink(view, title, href, {
-      nested,
-      onCreateLink,
-      dictionary,
-    });
-  };
-
   const handleOnSelectLink = ({
     href,
     from,
@@ -203,38 +174,44 @@ export default function SelectionToolbar(props: Props) {
     );
   };
 
-  const { onCreateLink, isTemplate, rtl, canComment, canUpdate, ...rest } =
-    props;
+  const { isTemplate, rtl, canComment, canUpdate, ...rest } = props;
   const { state } = view;
   const { selection } = state;
-  const isDividerSelection = isNodeActive(state.schema.nodes.hr)(state);
 
   if ((readOnly && !canComment) || isDragging) {
     return null;
   }
 
+  const isDividerSelection = isNodeActive(state.schema.nodes.hr)(state);
   const colIndex = getColumnIndex(state);
   const rowIndex = getRowIndex(state);
   const isTableSelection = colIndex !== undefined && rowIndex !== undefined;
-  const link = isMarkActive(state.schema.marks.link)(state);
-  const range = getMarkRange(selection.$from, state.schema.marks.link);
+  const isCellSelection = selection instanceof CellSelection;
+  const link = getMarkRange(selection.$from, state.schema.marks.link);
   const isImageSelection =
     selection instanceof NodeSelection && selection.node.type.name === "image";
   const isAttachmentSelection =
     selection instanceof NodeSelection &&
     selection.node.type.name === "attachment";
+  const isEmbedSelection =
+    selection instanceof NodeSelection && selection.node.type.name === "embed";
   const isCodeSelection = isInCode(state, { onlyBlock: true });
+  const isNoticeSelection = isInNotice(state);
 
   let items: MenuItem[] = [];
+  let align: "center" | "start" | "end" = "center";
 
   if (isCodeSelection && selection.empty) {
     items = getCodeMenuItems(state, readOnly, dictionary);
+    align = "end";
   } else if (isTableSelection) {
     items = getTableMenuItems(state, dictionary);
   } else if (colIndex !== undefined) {
     items = getTableColMenuItems(state, colIndex, rtl, dictionary);
   } else if (rowIndex !== undefined) {
     items = getTableRowMenuItems(state, rowIndex, dictionary);
+  } else if (isCellSelection) {
+    items = getTableCellMenuItems(state, dictionary);
   } else if (isImageSelection) {
     items = readOnly ? [] : getImageMenuItems(state, dictionary);
   } else if (isAttachmentSelection) {
@@ -243,14 +220,20 @@ export default function SelectionToolbar(props: Props) {
     items = getDividerMenuItems(state, dictionary);
   } else if (readOnly) {
     items = getReadOnlyMenuItems(state, !!canUpdate, dictionary);
+  } else if (isNoticeSelection && selection.empty) {
+    items = getNoticeMenuItems(state, readOnly, dictionary);
+    align = "end";
   } else {
-    items = getFormattingMenuItems(state, isTemplate, isMobile, dictionary);
+    items = getFormattingMenuItems(state, isTemplate, dictionary);
   }
 
   // Some extensions may be disabled, remove corresponding items
   items = items.filter((item) => {
     if (item.name === "separator") {
       return true;
+    }
+    if (item.name === "dimensions") {
+      return item.visible ?? false;
     }
     if (item.name && !commands[item.name]) {
       return false;
@@ -266,26 +249,33 @@ export default function SelectionToolbar(props: Props) {
     return null;
   }
 
-  const showLinkToolbar = link && range;
+  const showLinkToolbar =
+    link && link.from === selection.from && link.to === selection.to;
 
   return (
     <FloatingToolbar
+      align={align}
       active={isActive}
       ref={menuRef}
-      width={showLinkToolbar ? 336 : undefined}
+      width={showLinkToolbar || isEmbedSelection ? 336 : undefined}
     >
       {showLinkToolbar ? (
         <LinkEditor
-          key={`${range.from}-${range.to}`}
+          key={`${link.from}-${link.to}`}
           dictionary={dictionary}
           view={view}
-          mark={range.mark}
-          from={range.from}
-          to={range.to}
+          mark={link.mark}
+          from={link.from}
+          to={link.to}
           onClickLink={props.onClickLink}
-          onSearchLink={props.onSearchLink}
-          onCreateLink={onCreateLink ? handleOnCreateLink : undefined}
           onSelectLink={handleOnSelectLink}
+        />
+      ) : isEmbedSelection ? (
+        <EmbedLinkEditor
+          key={`embed-${selection.from}`}
+          node={(selection as NodeSelection).node}
+          view={view}
+          dictionary={dictionary}
         />
       ) : (
         <ToolbarMenu items={items} {...rest} />

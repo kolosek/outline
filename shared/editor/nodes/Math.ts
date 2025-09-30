@@ -1,16 +1,9 @@
 import {
   mathBackspaceCmd,
   insertMathCmd,
-  makeInlineMathInputRule,
   mathSchemaSpec,
 } from "@benrbray/prosemirror-math";
 import { PluginSimple } from "markdown-it";
-import {
-  chainCommands,
-  deleteSelection,
-  selectNodeBackward,
-  joinBackward,
-} from "prosemirror-commands";
 import {
   NodeSpec,
   NodeType,
@@ -22,6 +15,8 @@ import MathPlugin from "../extensions/Math";
 import { MarkdownSerializerState } from "../lib/markdown/serializer";
 import mathRule, { REGEX_INLINE_MATH_DOLLARS } from "../rules/math";
 import Node from "./Node";
+import { InputRule } from "prosemirror-inputrules";
+import { isInCode } from "../queries/isInCode";
 
 export default class Math extends Node {
   get name() {
@@ -41,22 +36,41 @@ export default class Math extends Node {
 
   inputRules({ schema }: { schema: Schema }) {
     return [
-      makeInlineMathInputRule(
-        REGEX_INLINE_MATH_DOLLARS,
-        schema.nodes.math_inline
-      ),
+      new InputRule(REGEX_INLINE_MATH_DOLLARS, (state, match, start, end) => {
+        if (isInCode(state)) {
+          return null;
+        }
+
+        let $start = state.doc.resolve(start);
+        let index = $start.index();
+        let $end = state.doc.resolve(end);
+        // check if replacement valid
+        if (
+          !$start.parent.canReplaceWith(
+            index,
+            $end.index(),
+            schema.nodes.math_inline
+          )
+        ) {
+          return null;
+        }
+        // perform replacement
+        return state.tr.replaceRangeWith(
+          start,
+          end,
+          schema.nodes.math_inline.create(
+            undefined,
+            schema.nodes.math_inline.schema.text(match[1])
+          )
+        );
+      }),
     ];
   }
 
   keys({ type }: { type: NodeType }) {
     return {
       "Mod-Space": insertMathCmd(type),
-      Backspace: chainCommands(
-        deleteSelection,
-        mathBackspaceCmd,
-        joinBackward,
-        selectNodeBackward
-      ),
+      Backspace: mathBackspaceCmd,
     };
   }
 
@@ -69,9 +83,9 @@ export default class Math extends Node {
   }
 
   toMarkdown(state: MarkdownSerializerState, node: ProsemirrorNode) {
-    state.write("$$");
+    state.write("$");
     state.text(node.textContent, false);
-    state.write("$$");
+    state.write("$");
   }
 
   parseMarkdown() {

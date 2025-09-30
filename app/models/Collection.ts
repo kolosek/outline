@@ -3,7 +3,8 @@ import { action, computed, observable, runInAction } from "mobx";
 import {
   CollectionPermission,
   FileOperationFormat,
-  NavigationNode,
+  type NavigationNode,
+  NavigationNodeType,
   type ProsemirrorData,
 } from "@shared/types";
 import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
@@ -67,6 +68,13 @@ export default class Collection extends ParanoidModel {
     direction: "asc" | "desc";
   };
 
+  /**
+   * Whether commenting is enabled for the collection.
+   */
+  @Field
+  @observable
+  commenting?: boolean | null;
+
   /** The child documents of the collection. */
   @observable
   documents?: NavigationNode[];
@@ -78,6 +86,23 @@ export default class Collection extends ParanoidModel {
   /** The ID that appears in the collection slug. */
   @observable
   urlId: string;
+
+  /**
+   * The date and time the collection was archived.
+   */
+  @observable
+  archivedAt: string;
+
+  /**
+   * User who archived the collection.
+   */
+  @observable
+  archivedBy?: User;
+
+  @computed
+  get searchContent(): string {
+    return this.name;
+  }
 
   /** Returns whether the collection is empty, or undefined if not loaded. */
   @computed
@@ -116,6 +141,16 @@ export default class Collection extends ParanoidModel {
     );
   }
 
+  /**
+   * Returns whether there is a subscription for this collection in the store.
+   *
+   * @returns True if there is a subscription, false otherwise.
+   */
+  @computed
+  get isSubscribed(): boolean {
+    return !!this.store.rootStore.subscriptions.getByCollectionId(this.id);
+  }
+
   @computed
   get isManualSort(): boolean {
     return this.sort.field === "index";
@@ -132,7 +167,7 @@ export default class Collection extends ParanoidModel {
   /** The initial letter of the collection name as a string. */
   @computed
   get initial() {
-    return (this.name ? this.name[0] : "?").toUpperCase();
+    return (this.name?.charAt(0) ?? "?").toUpperCase();
   }
 
   @computed
@@ -151,6 +186,26 @@ export default class Collection extends ParanoidModel {
       .filter((m) => m.collectionId === this.id)
       .map((m) => m.user)
       .filter(Boolean);
+  }
+
+  @computed
+  get isArchived() {
+    return !!this.archivedAt;
+  }
+
+  @computed
+  get isDeleted() {
+    return !!this.deletedAt;
+  }
+
+  @computed
+  get isActive() {
+    return !this.isArchived && !this.isDeleted;
+  }
+
+  @computed
+  get hasDocuments() {
+    return !!this.documents?.length;
   }
 
   fetchDocuments = async (options?: { force: boolean }) => {
@@ -230,10 +285,47 @@ export default class Collection extends ParanoidModel {
     });
   }
 
+  /**
+   * Adds the document identified by the given id to the collection in
+   * memory. Does not add the document to the database or store.
+   *
+   * @param document The document to add.
+   * @param parentDocumentId The id of the document to add the new document to.
+   */
+  @action
+  addDocument(document: Document, parentDocumentId?: string) {
+    if (!this.documents) {
+      return;
+    }
+
+    if (!parentDocumentId) {
+      this.documents.unshift(document.asNavigationNode);
+      return;
+    }
+
+    const travelNodes = (nodes: NavigationNode[]) =>
+      nodes.forEach((node) => {
+        if (node.id === parentDocumentId) {
+          node.children = [document.asNavigationNode, ...(node.children ?? [])];
+        } else {
+          travelNodes(node.children);
+        }
+      });
+
+    travelNodes(this.documents);
+  }
+
   @action
   updateIndex(index: string) {
     this.index = index;
   }
+
+  @action
+  share = async () =>
+    this.store.rootStore.shares.create({
+      type: "collection",
+      collectionId: this.id,
+    });
 
   getChildrenForDocument(documentId: string) {
     let result: NavigationNode[] = [];
@@ -254,6 +346,19 @@ export default class Collection extends ParanoidModel {
     }
 
     return result;
+  }
+
+  @computed
+  get asNavigationNode(): NavigationNode {
+    return {
+      type: NavigationNodeType.Collection,
+      id: this.id,
+      title: this.name,
+      color: this.color ?? undefined,
+      icon: this.icon ?? undefined,
+      children: this.documents ?? [],
+      url: this.url,
+    };
   }
 
   pathToDocument(documentId: string) {
@@ -299,6 +404,26 @@ export default class Collection extends ParanoidModel {
 
   @action
   unstar = async () => this.store.unstar(this);
+
+  /**
+   * Subscribes the current user to this collection.
+   *
+   * @returns A promise that resolves when the subscription is created.
+   */
+  @action
+  subscribe = () => this.store.subscribe(this);
+
+  /**
+   * Unsubscribes the current user from this collection.
+   *
+   * @returns A promise that resolves when the subscription is destroyed.
+   */
+  @action
+  unsubscribe = () => this.store.unsubscribe(this);
+
+  archive = () => this.store.archive(this);
+
+  restore = () => this.store.restore(this);
 
   export = (format: FileOperationFormat, includeAttachments: boolean) =>
     client.post("/collections.export", {

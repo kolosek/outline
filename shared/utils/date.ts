@@ -1,4 +1,4 @@
-/* eslint-disable import/no-duplicates */
+/* oxlint-disable import/no-duplicates */
 import {
   Locale,
   addSeconds,
@@ -11,10 +11,12 @@ import {
 import {
   cs,
   de,
+  enGB,
   enUS,
   es,
   faIR,
   fr,
+  hu,
   it,
   ja,
   ko,
@@ -163,10 +165,12 @@ export function getCurrentDateTimeAsString(locale?: Intl.LocalesArgument) {
 const locales = {
   cs_CZ: cs,
   de_DE: de,
+  en_GB: enGB,
   en_US: enUS,
   es_ES: es,
   fa_IR: faIR,
   fr_FR: fr,
+  hu_HU: hu,
   it_IT: it,
   ja_JP: ja,
   ko_KR: ko,
@@ -189,7 +193,7 @@ const locales = {
  * @param language The user language
  * @returns The date-fns locale.
  */
-export function dateLocale(language: string | null | undefined) {
+export function dateLocale(language: keyof typeof locales | undefined | null) {
   return language ? locales[language] : undefined;
 }
 

@@ -1,6 +1,6 @@
+import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import * as React from "react";
 import { mergeRefs } from "react-merge-refs";
-import { VisuallyHidden } from "reakit/VisuallyHidden";
 import styled from "styled-components";
 import breakpoint from "styled-components-breakpoint";
 import { s, ellipsis } from "@shared/styles";
@@ -44,6 +44,10 @@ export const NativeInput = styled.input<{
 
   ${ellipsis()}
   ${undraggableOnDesktop()}
+
+  &[readOnly] {
+    color: ${s("textSecondary")};
+  }
 
   &:disabled,
   &::placeholder {
@@ -103,8 +107,8 @@ export const Outline = styled(Flex)<{
     props.hasError
       ? props.theme.danger
       : props.focused
-      ? props.theme.inputBorderFocused
-      : props.theme.inputBorder};
+        ? props.theme.inputBorderFocused
+        : props.theme.inputBorder};
   border-radius: 4px;
   font-weight: normal;
   align-items: center;
@@ -126,13 +130,14 @@ export interface Props
     React.InputHTMLAttributes<HTMLInputElement | HTMLTextAreaElement>,
     "prefix"
   > {
-  type?: "text" | "email" | "checkbox" | "search" | "textarea";
+  type?: "text" | "email" | "checkbox" | "search" | "textarea" | "password";
   labelHidden?: boolean;
   label?: string;
   flex?: boolean;
   short?: boolean;
   margin?: string | number;
   error?: string;
+  rows?: number;
   /** Optional component that appears inside the input before the textarea and any icon */
   prefix?: React.ReactNode;
   /** Optional icon that appears inside the input before the textarea */
@@ -176,6 +181,7 @@ function Input(
     if (ev.key === "Enter" && ev.metaKey) {
       if (props.onRequestSubmit) {
         props.onRequestSubmit(ev);
+        return;
       }
     }
 
@@ -215,7 +221,7 @@ function Input(
       <label>
         {label &&
           (labelHidden ? (
-            <VisuallyHidden>{wrappedLabel}</VisuallyHidden>
+            <VisuallyHidden.Root>{wrappedLabel}</VisuallyHidden.Root>
           ) : (
             wrappedLabel
           ))}
@@ -230,10 +236,11 @@ function Input(
               ])}
               onBlur={handleBlur}
               onFocus={handleFocus}
-              onKeyDown={handleKeyDown}
               hasIcon={!!icon}
               hasPrefix={!!prefix}
               {...rest}
+              // set it after "rest" to override "onKeyDown" from prop.
+              onKeyDown={handleKeyDown}
             />
           ) : (
             <NativeInput
@@ -243,11 +250,12 @@ function Input(
               ])}
               onBlur={handleBlur}
               onFocus={handleFocus}
-              onKeyDown={handleKeyDown}
               hasIcon={!!icon}
               hasPrefix={!!prefix}
               type={type}
               {...rest}
+              // set it after "rest" to override "onKeyDown" from prop.
+              onKeyDown={handleKeyDown}
             />
           )}
           {children}

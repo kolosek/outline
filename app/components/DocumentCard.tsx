@@ -1,24 +1,25 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { subDays } from "date-fns";
 import { m } from "framer-motion";
 import { observer } from "mobx-react";
-import { CloseIcon, DocumentIcon, ClockIcon } from "outline-icons";
-import * as React from "react";
+import { CloseIcon, DocumentIcon, ClockIcon, EyeIcon } from "outline-icons";
+import { useRef, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import styled, { useTheme } from "styled-components";
+import Icon from "@shared/components/Icon";
 import Squircle from "@shared/components/Squircle";
-import { s, ellipsis } from "@shared/styles";
+import { s, hover, ellipsis } from "@shared/styles";
 import { IconType } from "@shared/types";
 import { determineIconType } from "@shared/utils/icon";
 import Document from "~/models/Document";
 import Pin from "~/models/Pin";
 import Flex from "~/components/Flex";
-import Icon from "~/components/Icon";
 import NudeButton from "~/components/NudeButton";
 import Time from "~/components/Time";
 import useStores from "~/hooks/useStores";
-import { hover } from "~/styles";
+import { useTextStats } from "~/hooks/useTextStats";
 import CollectionIcon from "./Icons/CollectionIcon";
 import Text from "./Text";
 import Tooltip from "./Tooltip";
@@ -39,6 +40,7 @@ function DocumentCard(props: Props) {
   const { collections } = useStores();
   const theme = useTheme();
   const { document, pin, canUpdatePin, isDraggable } = props;
+  const pinnedToHome = useRef(!pin?.collectionId).current;
   const collection = document.collectionId
     ? collections.get(document.collectionId)
     : undefined;
@@ -61,7 +63,7 @@ function DocumentCard(props: Props) {
     transition,
   };
 
-  const handleUnpin = React.useCallback(
+  const handleUnpin = useCallback(
     async (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -69,6 +71,10 @@ function DocumentCard(props: Props) {
     },
     [pin]
   );
+
+  // If the document was updated within the last 7 days, show a timestamp instead of reading time
+  const isRecentlyUpdated =
+    new Date(document.updatedAt) > subDays(new Date(), 7);
 
   return (
     <Reorderable
@@ -117,18 +123,19 @@ function DocumentCard(props: Props) {
               <DocumentSquircle
                 icon={document.icon}
                 color={document.color ?? undefined}
+                initial={document.initial}
               />
             ) : (
               <Squircle
                 color={
                   collection?.color ??
-                  (!pin?.collectionId ? theme.slateLight : theme.slateDark)
+                  (pinnedToHome ? theme.slateLight : theme.slateDark)
                 }
               >
                 {collection?.icon &&
                 collection?.icon !== "letter" &&
                 collection?.icon !== "collection" &&
-                !pin?.collectionId ? (
+                pinnedToHome ? (
                   <CollectionIcon collection={collection} color="white" />
                 ) : (
                   <DocumentIcon color="white" />
@@ -142,13 +149,14 @@ function DocumentCard(props: Props) {
                   : document.titleWithDefault}
               </Heading>
               <DocumentMeta size="xsmall">
-                <Clock size={18} />
-                <Time
-                  dateTime={document.updatedAt}
-                  tooltipDelay={500}
-                  addSuffix
-                  shorten
-                />
+                {isRecentlyUpdated ? (
+                  <>
+                    <Clock size={18} />
+                    <Time dateTime={document.updatedAt} addSuffix shorten />
+                  </>
+                ) : (
+                  <ReadingTime document={document} />
+                )}
               </DocumentMeta>
             </div>
           </Content>
@@ -169,20 +177,40 @@ function DocumentCard(props: Props) {
   );
 }
 
+const ReadingTime = ({ document }: { document: Document }) => {
+  const { t } = useTranslation();
+  const markdown = useMemo(() => document.toMarkdown(), [document]);
+  const stats = useTextStats(markdown);
+
+  return (
+    <>
+      <EyeIcon size={18} />
+      {t(`{{ minutes }}m read`, {
+        minutes: stats.total.readingTime,
+      })}
+    </>
+  );
+};
+
 const DocumentSquircle = ({
   icon,
   color,
+  initial,
 }: {
   icon: string;
   color?: string;
+  initial?: string;
 }) => {
   const theme = useTheme();
   const iconType = determineIconType(icon)!;
   const squircleColor = iconType === IconType.SVG ? color : theme.slateLight;
+  const style = {
+    "--background": squircleColor,
+  } as React.CSSProperties;
 
   return (
-    <Squircle color={squircleColor}>
-      <Icon value={icon} color={theme.white} forceColor />
+    <Squircle color={squircleColor} style={style}>
+      <Icon value={icon} color={theme.white} initial={initial} forceColor />
     </Squircle>
   );
 };

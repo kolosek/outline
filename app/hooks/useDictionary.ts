@@ -1,15 +1,24 @@
-import * as React from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+/**
+ * Hook that provides a dictionary of translated UI strings.
+ *
+ * @returns An object containing all translated UI strings used throughout the application
+ */
 export default function useDictionary() {
   const { t } = useTranslation();
 
-  return React.useMemo(
+  return useMemo(
     () => ({
-      addColumnAfter: t("Add column after"),
-      addColumnBefore: t("Add column before"),
-      addRowAfter: t("Add row after"),
-      addRowBefore: t("Add row before"),
+      addColumnAfter: t("Insert after"),
+      addColumnBefore: t("Insert before"),
+      moveRowUp: t("Move up"),
+      moveRowDown: t("Move down"),
+      moveColumnLeft: t("Move left"),
+      moveColumnRight: t("Move right"),
+      addRowAfter: t("Insert after"),
+      addRowBefore: t("Insert before"),
       alignCenter: t("Align center"),
       alignLeft: t("Align left"),
       alignRight: t("Align right"),
@@ -30,6 +39,7 @@ export default function useDictionary() {
       deleteRow: t("Delete"),
       deleteTable: t("Delete table"),
       deleteAttachment: t("Delete file"),
+      dimensions: `${t("Width")} × ${t("Height")}`,
       download: t("Download"),
       downloadAttachment: t("Download file"),
       replaceAttachment: t("Replace file"),
@@ -39,10 +49,11 @@ export default function useDictionary() {
       em: t("Italic"),
       embedInvalidLink: t("Sorry, that link won’t work for this embed type"),
       file: t("File attachment"),
-      findOrCreateDoc: `${t("Paste a link, search, or create")}…`,
+      enterLink: `${t("Enter a link")}…`,
       h1: t("Big heading"),
       h2: t("Medium heading"),
       h3: t("Small heading"),
+      h4: t("Extra small heading"),
       heading: t("Heading"),
       hr: t("Divider"),
       image: t("Image"),
@@ -76,9 +87,12 @@ export default function useDictionary() {
       sortAsc: t("Sort ascending"),
       sortDesc: t("Sort descending"),
       table: t("Table"),
+      exportAsCSV: t("Export as CSV"),
       toggleHeader: t("Toggle header"),
       mathInline: t("Math inline (LaTeX)"),
       mathBlock: t("Math block (LaTeX)"),
+      mergeCells: t("Merge cells"),
+      splitCell: t("Split cell"),
       tip: t("Tip"),
       tipNotice: t("Tip notice"),
       warning: t("Warning"),
@@ -93,6 +107,7 @@ export default function useDictionary() {
       video: t("Video"),
       untitled: t("Untitled"),
       none: t("None"),
+      deleteEmbed: t("Delete embed"),
     }),
     [t]
   );

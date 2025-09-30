@@ -79,7 +79,10 @@ router.post(
       return;
     }
     // get content for unfurled links
-    const unfurls = {};
+    const unfurls: Record<
+      string,
+      { title: string; text: string; color?: string | undefined }
+    > = {};
 
     for (const link of event.links) {
       const documentId = parseDocumentSlug(link.url);
@@ -109,7 +112,7 @@ router.post(
             unfurls[link.url] = {
               title: doc.title,
               text: doc.getSummary(),
-              color: doc.collection?.color,
+              color: doc.collection?.color ?? undefined,
             };
           }
         }
@@ -161,9 +164,8 @@ router.post(
     verifySlackToken(token);
 
     // we find the document based on the users teamId to ensure access
-    const document = await Document.scope("withCollection").findByPk(
-      callback_id
-    );
+    const document =
+      await Document.scope("withCollection").findByPk(callback_id);
 
     if (!document) {
       throw InvalidRequestError("Invalid callback_id");
@@ -222,6 +224,7 @@ router.post(
     }
 
     const options = {
+      query: text,
       limit: 5,
     };
 
@@ -235,11 +238,7 @@ router.post(
       return;
     }
 
-    const { results, total } = await SearchHelper.searchForUser(
-      user,
-      text,
-      options
-    );
+    const { results, total } = await SearchHelper.searchForUser(user, options);
 
     await SearchQuery.create({
       userId: user ? user.id : null,

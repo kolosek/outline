@@ -16,7 +16,7 @@ import splitHeading from "../commands/splitHeading";
 import toggleBlockType from "../commands/toggleBlockType";
 import headingToSlug, { headingToPersistenceKey } from "../lib/headingToSlug";
 import { MarkdownSerializerState } from "../lib/markdown/serializer";
-import { FoldingHeadersPlugin } from "../plugins/FoldingHeaders";
+import { findCollapsedNodes } from "../queries/findCollapsedNodes";
 import Node from "./Node";
 
 export default class Heading extends Node {
@@ -38,6 +38,7 @@ export default class Heading extends Node {
       attrs: {
         level: {
           default: 1,
+          validate: "number",
         },
         collapsed: {
           default: undefined,
@@ -77,6 +78,9 @@ export default class Heading extends Node {
 
         return [
           `h${node.attrs.level + (this.options.offset || 0)}`,
+          {
+            dir: "auto",
+          },
           [
             "span",
             {
@@ -217,7 +221,7 @@ export default class Heading extends Node {
   get plugins() {
     const getAnchors = (doc: ProsemirrorNode) => {
       const decorations: Decoration[] = [];
-      const previouslySeen = {};
+      const previouslySeen: Record<string, number> = {};
 
       doc.descendants((node, pos) => {
         if (node.type.name !== this.name) {
@@ -270,7 +274,23 @@ export default class Heading extends Node {
       },
     });
 
-    return [new FoldingHeadersPlugin(this.editor.props.id), plugin];
+    const foldPlugin: Plugin = new Plugin({
+      props: {
+        decorations: (state) => {
+          const { doc } = state;
+          const decorations: Decoration[] = findCollapsedNodes(doc).map(
+            (block) =>
+              Decoration.node(block.pos, block.pos + block.node.nodeSize, {
+                class: "folded-content",
+              })
+          );
+
+          return DecorationSet.create(doc, decorations);
+        },
+      },
+    });
+
+    return [foldPlugin, plugin];
   }
 
   inputRules({ type }: { type: NodeType }) {

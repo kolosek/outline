@@ -1,11 +1,12 @@
-import Token from "markdown-it/lib/token";
-import { NodeSpec } from "prosemirror-model";
+import { Token } from "markdown-it";
+import { NodeSpec, Slice } from "prosemirror-model";
 import { Plugin } from "prosemirror-state";
 import { DecorationSet, Decoration } from "prosemirror-view";
 import { addRowBefore, selectRow, selectTable } from "../commands/table";
 import { getCellAttrs, setCellAttrs } from "../lib/table";
 import {
   getCellsInColumn,
+  getRowIndexInMap,
   isRowSelected,
   isTableSelected,
 } from "../queries/table";
@@ -71,6 +72,35 @@ export default class TableCell extends Node {
     return [
       new Plugin({
         props: {
+          transformCopied: (slice) => {
+            // check if the copied selection is a single table, with a single row, with a single cell. If so,
+            // copy the cell content only – not a table with a single cell. This leads to more predictable pasting
+            // behavior, both in and outside the app.
+            if (slice.content.childCount === 1) {
+              const table = slice.content.firstChild;
+              if (
+                table?.type.spec.tableRole === "table" &&
+                table.childCount === 1
+              ) {
+                const row = table.firstChild;
+                if (
+                  row?.type.spec.tableRole === "row" &&
+                  row.childCount === 1
+                ) {
+                  const cell = row.firstChild;
+                  if (cell?.type.spec.tableRole === "cell") {
+                    return new Slice(
+                      cell.content,
+                      slice.openStart,
+                      slice.openEnd
+                    );
+                  }
+                }
+              }
+            }
+
+            return slice;
+          },
           handleDOMEvents: {
             mousedown: (view, event) => {
               if (!(event.target instanceof HTMLElement)) {
@@ -126,7 +156,10 @@ export default class TableCell extends Node {
             const rows = getCellsInColumn(0)(state);
 
             if (rows) {
-              rows.forEach((pos, index) => {
+              rows.forEach((pos, visualIndex) => {
+                const actualRowIndex = getRowIndexInMap(visualIndex, state);
+                const index =
+                  actualRowIndex !== -1 ? actualRowIndex : visualIndex;
                 if (index === 0) {
                   const className = cn(EditorStyleHelper.tableGrip, {
                     selected: isTableSelected(state),
@@ -151,7 +184,7 @@ export default class TableCell extends Node {
                 const className = cn(EditorStyleHelper.tableGripRow, {
                   selected: isRowSelected(index)(state),
                   first: index === 0,
-                  last: index === rows.length - 1,
+                  last: visualIndex === rows.length - 1,
                 });
 
                 decorations.push(

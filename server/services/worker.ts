@@ -3,6 +3,7 @@ import Logger from "@server/logging/Logger";
 import { setResource, addTags } from "@server/logging/tracer";
 import { traceFunction } from "@server/logging/tracing";
 import HealthMonitor from "@server/queues/HealthMonitor";
+import { Event } from "@server/types";
 import { initI18n } from "@server/utils/i18n";
 import {
   globalEventQueue,
@@ -13,8 +14,8 @@ import {
 import processors from "../queues/processors";
 import tasks from "../queues/tasks";
 
-export default function init() {
-  void initI18n();
+export default async function init() {
+  await initI18n();
 
   // This queue processes the global event bus
   globalEventQueue
@@ -25,7 +26,7 @@ export default function init() {
         spanName: "process",
         isRoot: true,
       })(async function (job) {
-        const event = job.data;
+        const event = job.data as Event;
         let err;
 
         setResource(`Event.${event.name}`);
@@ -99,6 +100,7 @@ export default function init() {
           );
         }
 
+        // @ts-expect-error We will not instantiate an abstract class
         const processor = new ProcessorClass();
 
         if (processor.perform) {
@@ -109,6 +111,11 @@ export default function init() {
           try {
             await processor.perform(event);
           } catch (err) {
+            // last attempt has failed.
+            if (job.attemptsMade + 1 >= (job.opts.attempts || 1)) {
+              await processor.onFailed(event).catch(); // suppress exception from 'onFailed'.
+            }
+
             Logger.error(
               `Error processing ${event.name} in ${name}`,
               err,
@@ -146,11 +153,17 @@ export default function init() {
 
         Logger.info("worker", `${name} running`, props);
 
+        // @ts-expect-error We will not instantiate an abstract class
         const task = new TaskClass();
 
         try {
           return await task.perform(props);
         } catch (err) {
+          // last attempt has failed.
+          if (job.attemptsMade + 1 >= (job.opts.attempts || 1)) {
+            await task.onFailed(props).catch(); // suppress exception from 'onFailed'.
+          }
+
           Logger.error(`Error processing task in ${name}`, err, props);
           throw err;
         }

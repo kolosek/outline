@@ -44,11 +44,13 @@ export default abstract class ExportTask extends BaseTask<Props> {
       ? [fileOperation.collectionId]
       : await user.collectionIds();
 
-    const collections = await Collection.findAll({
-      where: {
-        id: collectionIds,
-      },
-    });
+    const collections = await Collection.scope("withDocumentStructure").findAll(
+      {
+        where: {
+          id: collectionIds,
+        },
+      }
+    );
 
     let filePath: string | undefined;
 
@@ -157,12 +159,17 @@ export default abstract class ExportTask extends BaseTask<Props> {
     fileOperation: FileOperation,
     options: Partial<FileOperation> & { error?: Error }
   ) {
-    await fileOperation.update({
-      ...options,
-      error: options.error
-        ? truncate(options.error.message, { length: 255 })
-        : undefined,
-    });
+    await fileOperation.update(
+      {
+        ...options,
+        error: options.error
+          ? truncate(options.error.message, { length: 255 })
+          : undefined,
+      },
+      {
+        hooks: false,
+      }
+    );
 
     await Event.schedule({
       name: "fileOperations.update",

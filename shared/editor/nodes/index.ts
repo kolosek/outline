@@ -1,7 +1,6 @@
 import DateTime from "../extensions/DateTime";
 import History from "../extensions/History";
 import MaxLength from "../extensions/MaxLength";
-import Placeholder from "../extensions/Placeholder";
 import TrailingNode from "../extensions/TrailingNode";
 import Extension from "../lib/Extension";
 import Bold from "../marks/Bold";
@@ -56,17 +55,17 @@ export const basicExtensions: Nodes = [
   Emoji,
   Text,
   SimpleImage,
-  Bold,
   Code,
+  Bold,
   Italic,
   Underline,
   Link,
   Strikethrough,
   History,
   TrailingNode,
-  Placeholder,
   MaxLength,
   DateTime,
+  HardBreak,
 ];
 
 export const listExtensions: Nodes = [
@@ -93,7 +92,6 @@ export const tableExtensions: Nodes = [
 export const richExtensions: Nodes = [
   ...basicExtensions.filter((n) => n !== SimpleImage),
   Image,
-  HardBreak,
   CodeBlock,
   CodeFence,
   Blockquote,
@@ -107,6 +105,7 @@ export const richExtensions: Nodes = [
   TemplatePlaceholder,
   Math,
   MathBlock,
+  Mention,
   // Container type nodes should be last so that key handlers are registered for content inside
   // the container nodes first.
   ...listExtensions,
@@ -116,4 +115,8 @@ export const richExtensions: Nodes = [
 /**
  * Add commenting and mentions to a set of nodes
  */
-export const withComments = (nodes: Nodes) => [...nodes, Mention, Comment];
+export const withComments = (nodes: Nodes) => [
+  ...nodes.filter((node) => node !== Mention),
+  Mention,
+  Comment,
+];

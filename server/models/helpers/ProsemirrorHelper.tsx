@@ -1,19 +1,20 @@
-import { prosemirrorToYDoc } from "@getoutline/y-prosemirror";
 import { JSDOM } from "jsdom";
 import compact from "lodash/compact";
 import flatten from "lodash/flatten";
+import isMatch from "lodash/isMatch";
 import uniq from "lodash/uniq";
-import { Node, DOMSerializer, Fragment, Mark } from "prosemirror-model";
+import { Node, DOMSerializer, Fragment } from "prosemirror-model";
 import * as React from "react";
 import { renderToString } from "react-dom/server";
 import styled, { ServerStyleSheet, ThemeProvider } from "styled-components";
+import { prosemirrorToYDoc } from "y-prosemirror";
 import * as Y from "yjs";
 import EditorContainer from "@shared/editor/components/Styles";
-import embeds from "@shared/editor/embeds";
 import GlobalStyles from "@shared/styles/globals";
 import light from "@shared/styles/theme";
-import { ProsemirrorData } from "@shared/types";
+import { MentionType, ProsemirrorData, UnfurlResponse } from "@shared/types";
 import { attachmentRedirectRegex } from "@shared/utils/ProsemirrorHelper";
+import parseDocumentSlug from "@shared/utils/parseDocumentSlug";
 import { isRTL } from "@shared/utils/rtl";
 import { isInternalUrl } from "@shared/utils/urls";
 import { schema, parser } from "@server/editor";
@@ -22,7 +23,6 @@ import { trace } from "@server/logging/tracing";
 import Attachment from "@server/models/Attachment";
 import User from "@server/models/User";
 import FileStorage from "@server/storage/files";
-import { TextHelper } from "./TextHelper";
 
 export type HTMLOptions = {
   /** A title, if it should be included */
@@ -31,18 +31,22 @@ export type HTMLOptions = {
   includeStyles?: boolean;
   /** Whether to include mermaidjs scripts in the generated HTML (defaults to false) */
   includeMermaid?: boolean;
+  /** Whether to include head tags in the generated HTML (defaults to true) */
+  includeHead?: boolean;
   /** Whether to include styles to center diff (defaults to true) */
   centered?: boolean;
   /** The base URL to use for relative links */
   baseUrl?: string;
 };
 
-type MentionAttrs = {
-  type: string;
+export type MentionAttrs = {
+  type: MentionType;
   label: string;
   modelId: string;
   actorId: string | undefined;
   id: string;
+  href?: string;
+  unfurl?: UnfurlResponse[keyof UnfurlResponse];
 };
 
 @trace()
@@ -61,49 +65,7 @@ export class ProsemirrorHelper {
       );
     }
 
-    let node = parser.parse(input);
-
-    // in the editor embeds are created at runtime by converting links into
-    // embeds where they match.Because we're converting to a CRDT structure on
-    //  the server we need to mimic this behavior.
-    function urlsToEmbeds(node: Node): Node {
-      if (node.type.name === "paragraph") {
-        // @ts-expect-error content
-        for (const textNode of node.content.content) {
-          for (const embed of embeds) {
-            if (
-              textNode.text &&
-              textNode.marks.some(
-                (m: Mark) =>
-                  m.type.name === "link" && m.attrs.href === textNode.text
-              ) &&
-              embed.matcher(textNode.text)
-            ) {
-              return schema.nodes.embed.createAndFill({
-                href: textNode.text,
-              }) as Node;
-            }
-          }
-        }
-      }
-
-      if (node.content) {
-        const contentAsArray =
-          node.content instanceof Fragment
-            ? // @ts-expect-error content
-              node.content.content
-            : node.content;
-        // @ts-expect-error content
-        node.content = Fragment.fromArray(contentAsArray.map(urlsToEmbeds));
-      }
-
-      return node;
-    }
-
-    if (node) {
-      node = urlsToEmbeds(node);
-    }
-
+    const node = parser.parse(input);
     return node ? prosemirrorToYDoc(node, fieldName) : new Y.Doc();
   }
 
@@ -120,10 +82,13 @@ export class ProsemirrorHelper {
   /**
    * Converts a plain object into a Prosemirror Node.
    *
-   * @param data The object to parse
+   * @param data The ProsemirrorData object or string to parse.
    * @returns The content as a Prosemirror Node
    */
-  static toProsemirror(data: ProsemirrorData) {
+  static toProsemirror(data: ProsemirrorData | string) {
+    if (typeof data === "string") {
+      return parser.parse(data);
+    }
     return Node.fromJSON(schema, data);
   }
 
@@ -131,16 +96,29 @@ export class ProsemirrorHelper {
    * Returns an array of attributes of all mentions in the node.
    *
    * @param node The node to parse mentions from
+   * @param options Attributes to use for filtering mentions
    * @returns An array of mention attributes
    */
-  static parseMentions(doc: Node) {
+  static parseMentions(doc: Node, options?: Partial<MentionAttrs>) {
     const mentions: MentionAttrs[] = [];
 
-    doc.descendants((node: Node) => {
+    const isApplicableNode = (node: Node) => {
+      if (node.type.name !== "mention") {
+        return false;
+      }
+
       if (
-        node.type.name === "mention" &&
-        !mentions.some((m) => m.id === node.attrs.id)
+        (options?.type && options.type !== node.attrs.type) ||
+        (options?.modelId && options.modelId !== node.attrs.modelId)
       ) {
+        return false;
+      }
+
+      return !mentions.some((m) => m.id === node.attrs.id);
+    };
+
+    doc.descendants((node: Node) => {
+      if (isApplicableNode(node)) {
         mentions.push(node.attrs as MentionAttrs);
         return false;
       }
@@ -153,6 +131,123 @@ export class ProsemirrorHelper {
     });
 
     return mentions;
+  }
+
+  /**
+   * Returns an array of document IDs referenced through links or mentions in the node.
+   *
+   * @param node The node to parse document IDs from
+   * @returns An array of document IDs
+   */
+  static parseDocumentIds(doc: Node) {
+    const identifiers: string[] = [];
+
+    doc.descendants((node: Node) => {
+      if (
+        node.type.name === "mention" &&
+        node.attrs.type === MentionType.Document &&
+        !identifiers.includes(node.attrs.modelId)
+      ) {
+        identifiers.push(node.attrs.modelId);
+        return true;
+      }
+
+      if (node.type.name === "text") {
+        // get marks for text nodes
+        node.marks.forEach((mark) => {
+          // any of the marks identifiers?
+          if (mark.type.name === "link") {
+            const slug = parseDocumentSlug(mark.attrs.href);
+
+            // don't return the same link more than once
+            if (slug && !identifiers.includes(slug)) {
+              identifiers.push(slug);
+            }
+          }
+        });
+      }
+
+      if (!node.content.size) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return identifiers;
+  }
+
+  /**
+   * Find the nearest ancestor block node which contains the mention.
+   *
+   * @param doc The top-level doc node of a document / revision.
+   * @param mention The mention for which the ancestor node is needed.
+   * @returns A new top-level doc node with the ancestor node as the only child.
+   */
+  static getNodeForMentionEmail(doc: Node, mention: MentionAttrs) {
+    let blockNode: Node | undefined;
+    const potentialBlockNodes = [
+      "table",
+      "checkbox_list",
+      "heading",
+      "paragraph",
+    ];
+
+    const isNodeContainingMention = (node: Node) => {
+      let foundMention = false;
+
+      node.descendants((childNode: Node) => {
+        if (
+          childNode.type.name === "mention" &&
+          isMatch(childNode.attrs, mention)
+        ) {
+          foundMention = true;
+          return false;
+        }
+
+        // No need to traverse other descendants once we find the mention.
+        if (foundMention) {
+          return false;
+        }
+
+        return true;
+      });
+
+      return foundMention;
+    };
+
+    doc.descendants((node: Node) => {
+      // No need to traverse other descendants once we find the containing block node.
+      if (blockNode) {
+        return false;
+      }
+
+      if (potentialBlockNodes.includes(node.type.name)) {
+        if (isNodeContainingMention(node)) {
+          blockNode = node;
+        }
+        return false;
+      }
+
+      return true;
+    });
+
+    // Use the containing block node to maintain structure during serialization.
+    // Minify to include mentioned child only.
+    if (blockNode && !["heading", "paragraph"].includes(blockNode.type.name)) {
+      const children: Node[] = [];
+
+      blockNode.forEach((child: Node) => {
+        if (isNodeContainingMention(child)) {
+          children.push(child);
+        }
+      });
+
+      blockNode = blockNode.copy(Fragment.fromArray(children));
+    }
+
+    // Return a new top-level "doc" node to maintain structure during serialization.
+    return blockNode ? doc.copy(Fragment.fromArray([blockNode])) : undefined;
   }
 
   /**
@@ -177,29 +272,6 @@ export class ProsemirrorHelper {
     return removeMarksInner(json);
   }
 
-  /**
-   * Replaces all template variables in the node.
-   *
-   * @param data The ProsemirrorData object to replace variables in
-   * @param user The user to use for replacing variables
-   * @returns The content with variables replaced
-   */
-  static replaceTemplateVariables(data: ProsemirrorData, user: User) {
-    function replace(node: ProsemirrorData) {
-      if (node.type === "text" && node.text) {
-        node.text = TextHelper.replaceTemplateVariables(node.text, user);
-      }
-
-      if (node.content) {
-        node.content.forEach(replace);
-      }
-
-      return node;
-    }
-
-    return replace(data);
-  }
-
   static async replaceInternalUrls(
     doc: Node | ProsemirrorData,
     basePath: string
@@ -211,7 +283,11 @@ export class ProsemirrorHelper {
     }
 
     function replaceUrl(url: string) {
-      return url.replace(`/doc/`, `${basePath}/doc/`);
+      // Only replace if the URL starts with /doc/ (or) /collection/ (not already in a share path)
+      if (url.startsWith("/doc/") || url.startsWith("/collection/")) {
+        return `${basePath}${url}`;
+      }
+      return url;
     }
 
     function replaceInternalUrlsInner(node: ProsemirrorData) {
@@ -421,7 +497,7 @@ export class ProsemirrorHelper {
     // Render the Prosemirror document using virtual DOM and serialize the
     // result to a string
     const dom = new JSDOM(
-      `<!DOCTYPE html>${
+      `<!DOCTYPE html><meta charset="utf-8">${
         options?.includeStyles === false ? "" : styleTags
       }${html}`
     );
@@ -471,7 +547,7 @@ export class ProsemirrorHelper {
       // Inject Mermaid script
       if (mermaidElements.length) {
         element.innerHTML = `
-          import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@9/dist/mermaid.esm.min.mjs';
+          import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
           mermaid.initialize({
             startOnLoad: true,
             fontFamily: "inherit",
@@ -487,6 +563,95 @@ export class ProsemirrorHelper {
       dom.window.document.body.appendChild(element);
     }
 
-    return dom.serialize();
+    const output = dom.serialize();
+
+    if (options?.includeHead === false) {
+      // replace everything upto and including "<body>"
+      const body = "<body>";
+      const bodyIndex = output.indexOf(body) + body.length;
+      if (bodyIndex !== -1) {
+        return output
+          .substring(bodyIndex)
+          .replace("</body>", "")
+          .replace("</html>", "");
+      }
+    }
+
+    return output;
+  }
+
+  /**
+   * Processes mentions in the Prosemirror data, ensuring that mentions
+   * for deleted users are displayed as "@unknown" and updated names are
+   * displayed correctly.
+   *
+   * @param data The ProsemirrorData object to process
+   * @returns The processed ProsemirrorData with updated mentions
+   */
+  static async processMentions(data: ProsemirrorData | Node) {
+    const json = "toJSON" in data ? (data.toJSON() as ProsemirrorData) : data;
+
+    // First pass: collect all user IDs from mentions
+    const userIds: string[] = [];
+
+    function collectUserIds(node: ProsemirrorData) {
+      if (
+        node.type === "mention" &&
+        node.attrs?.type === MentionType.User &&
+        node.attrs?.modelId
+      ) {
+        userIds.push(node.attrs.modelId as string);
+      }
+
+      if (node.content) {
+        for (const child of node.content) {
+          collectUserIds(child);
+        }
+      }
+    }
+
+    collectUserIds(json);
+
+    // Load all users in a single query
+    const uniqueUserIds = [...new Set(userIds)];
+    const users = uniqueUserIds.length
+      ? await User.findAll({
+          where: {
+            id: uniqueUserIds,
+          },
+          attributes: ["id", "name"],
+        })
+      : [];
+
+    // Create a map for quick lookup
+    const userMap = new Map();
+    users.forEach((user) => {
+      userMap.set(user.id, user.name);
+    });
+
+    // Second pass: transform mentions with loaded user data
+    function transformMentions(node: ProsemirrorData) {
+      if (
+        node.type === "mention" &&
+        node.attrs?.type === MentionType.User &&
+        node.attrs?.modelId
+      ) {
+        const userId = node.attrs.modelId as string;
+        node.attrs = {
+          ...node.attrs,
+          label: userMap.get(userId) || "Unknown",
+        };
+      }
+
+      if (node.content) {
+        for (const child of node.content) {
+          transformMentions(child);
+        }
+      }
+
+      return node;
+    }
+
+    return transformMentions(json);
   }
 }

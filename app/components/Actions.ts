@@ -6,7 +6,6 @@ import Flex from "~/components/Flex";
 export const Action = styled(Flex)`
   justify-content: center;
   align-items: center;
-  padding: 0 0 0 12px;
   height: 32px;
   font-size: 15px;
   flex-shrink: 0;
@@ -18,7 +17,6 @@ export const Action = styled(Flex)`
 
 export const Separator = styled.div`
   flex-shrink: 0;
-  margin-left: 12px;
   width: 1px;
   height: 28px;
   background: ${s("divider")};
@@ -31,9 +29,9 @@ const Actions = styled(Flex)`
   left: 0;
   border-radius: 3px;
   background: ${s("background")};
-  transition: ${s("backgroundTransition")};
   padding: 12px;
   backdrop-filter: blur(20px);
+  gap: 12px;
 
   @media print {
     display: none;

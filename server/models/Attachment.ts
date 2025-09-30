@@ -5,6 +5,7 @@ import {
   InferAttributes,
   InferCreationAttributes,
   QueryTypes,
+  FindOptions,
 } from "sequelize";
 import {
   BeforeDestroy,
@@ -26,6 +27,7 @@ import Document from "./Document";
 import Team from "./Team";
 import User from "./User";
 import IdModel from "./base/IdModel";
+import { SkipChangeset } from "./decorators/Changeset";
 import Fix from "./decorators/Fix";
 import Length from "./validators/Length";
 
@@ -59,6 +61,7 @@ class Attachment extends IdModel<
   acl: string;
 
   @Column
+  @SkipChangeset
   lastAccessedAt: Date | null;
 
   @Column
@@ -161,6 +164,20 @@ class Attachment extends IdModel<
   }
 
   // static methods
+
+  /**
+   * Find an attachment by its key.
+   *
+   * @param key - The key of the attachment to find.
+   * @param options - Additional options for the query.
+   * @returns A promise resolving to the attachment with the given key, or null if not found.
+   */
+  static async findByKey(
+    key: string,
+    options?: FindOptions<Attachment>
+  ): Promise<Attachment | null> {
+    return this.findOne({ where: { key }, ...options });
+  }
 
   /**
    * Get the total size of all attachments for a given team.

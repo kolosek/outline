@@ -1,7 +1,8 @@
 import { MoreIcon } from "outline-icons";
 import * as React from "react";
 import styled from "styled-components";
-import { extraArea, s } from "@shared/styles";
+import { extraArea, hover, s } from "@shared/styles";
+import { isMobile } from "@shared/utils/browser";
 import Flex from "~/components/Flex";
 import Text from "~/components/Text";
 import { draggableOnDesktop, undraggableOnDesktop } from "~/styles";
@@ -59,6 +60,7 @@ const StyledMoreIcon = styled(MoreIcon)`
 `;
 
 const Container = styled(Flex)<{ $position: "top" | "bottom" }>`
+  overflow: hidden;
   padding-top: ${(props) =>
     props.$position === "top" && Desktop.hasInsetTitlebar() ? 36 : 0}px;
   ${draggableOnDesktop()}
@@ -81,12 +83,12 @@ const Button = styled(Flex)<{
   flex: 1;
   color: ${s("textTertiary")};
   align-items: center;
-  padding: 4px;
+  padding: ${isMobile() ? 12 : 4}px 4px;
   font-size: 15px;
   font-weight: 500;
   border-radius: 4px;
   border: 0;
-  margin: ${(props) => (props.$position === "top" ? 16 : 8)}px 0;
+  margin: ${(props) => (!isMobile() && props.$position === "top" ? 16 : 8)}px 0;
   background: none;
   flex-shrink: 0;
 
@@ -101,10 +103,9 @@ const Button = styled(Flex)<{
   ${extraArea(4)}
 
   &:active,
-  &:hover,
+  &:${hover},
   &[aria-expanded="true"] {
     color: ${s("sidebarText")};
-    transition: background 100ms ease-in-out;
     background: ${s("sidebarActiveBackground")};
   }
 

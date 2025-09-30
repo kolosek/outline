@@ -1,10 +1,10 @@
+import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { m } from "framer-motion";
 import { action } from "mobx";
 import { observer } from "mobx-react";
 import { ImageIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { VisuallyHidden } from "reakit";
 import { toast } from "sonner";
 import { useTheme } from "styled-components";
 import { v4 as uuidv4 } from "uuid";
@@ -27,6 +27,8 @@ import { Bubble } from "./CommentThreadItem";
 import { HighlightedText } from "./HighlightText";
 
 type Props = {
+  /** Callback when the form is submitted. */
+  onSubmit?: () => void;
   /** Callback when the draft should be saved. */
   onSaveDraft: (data: ProsemirrorData | undefined) => void;
   /** A draft comment for this thread. */
@@ -47,22 +49,23 @@ type Props = {
   highlightedText?: string;
   /** The text direction of the editor */
   dir?: "rtl" | "ltr";
-  /** Callback when the user is typing in the editor */
-  onTyping?: () => void;
   /** Callback when the editor is focused */
   onFocus?: () => void;
   /** Callback when the editor is blurred */
   onBlur?: () => void;
+  /** Callback when user presses up arrow at the start of the editor */
+  onUpArrowAtStart?: () => void;
 };
 
 function CommentForm({
   documentId,
   thread,
   draft,
+  onSubmit,
   onSaveDraft,
-  onTyping,
   onFocus,
   onBlur,
+  onUpArrowAtStart,
   autoFocus,
   standalone,
   placeholder,
@@ -109,6 +112,7 @@ function CommentForm({
           createdAt: new Date().toISOString(),
           documentId,
           data: draft,
+          reactions: [],
         },
         comments
       );
@@ -118,6 +122,7 @@ function CommentForm({
         documentId,
         data: draft,
       })
+      .then(() => onSubmit?.())
       .catch(() => {
         comment.isNew = true;
         toast.error(t("Error creating comment"));
@@ -144,6 +149,7 @@ function CommentForm({
         parentCommentId: thread?.id,
         documentId,
         data: draft,
+        reactions: [],
       },
       comments
     );
@@ -151,11 +157,14 @@ function CommentForm({
     comment.id = uuidv4();
     comments.add(comment);
 
-    comment.save().catch(() => {
-      comments.remove(comment.id);
-      comment.isNew = true;
-      toast.error(t("Error creating comment"));
-    });
+    comment
+      .save()
+      .then(() => onSubmit?.())
+      .catch(() => {
+        comments.remove(comment.id);
+        comment.isNew = true;
+        toast.error(t("Error creating comment"));
+      });
 
     // optimistically update the comment model
     comment.isNew = false;
@@ -173,7 +182,6 @@ function CommentForm({
   ) => {
     const text = value(true, true);
     onSaveDraft(text ? value(false, true) : undefined);
-    onTyping?.();
   };
 
   const handleSave = () => {
@@ -222,6 +230,13 @@ function CommentForm({
     file.current?.click();
   };
 
+  const handleUpArrowAtStart = () => {
+    if (onUpArrowAtStart) {
+      onUpArrowAtStart();
+      setInputFocused(false);
+    }
+  };
+
   // Focus the editor when it's a new comment just mounted, after a delay as the
   // editor is mounted within a fade transition.
   React.useEffect(() => {
@@ -261,7 +276,7 @@ function CommentForm({
       {...presence}
       {...rest}
     >
-      <VisuallyHidden>
+      <VisuallyHidden.Root>
         <input
           ref={file}
           type="file"
@@ -269,7 +284,7 @@ function CommentForm({
           accept={AttachmentValidation.imageContentTypes.join(", ")}
           tabIndex={-1}
         />
-      </VisuallyHidden>
+      </VisuallyHidden.Root>
       <Flex gap={8} align="flex-start" reverse={dir === "rtl"}>
         <Avatar model={user} size={24} style={{ marginTop: 8 }} />
         <Bubble
@@ -291,6 +306,7 @@ function CommentForm({
             onSave={handleSave}
             onFocus={handleFocus}
             onBlur={handleBlur}
+            onUpArrowAtStart={handleUpArrowAtStart}
             maxLength={CommentValidation.maxLength}
             placeholder={
               placeholder ||
@@ -311,7 +327,7 @@ function CommentForm({
                   {t("Cancel")}
                 </ButtonSmall>
               </Flex>
-              <Tooltip delay={500} content={t("Upload image")} placement="top">
+              <Tooltip content={t("Upload image")} placement="top">
                 <NudeButton onClick={handleImageUpload}>
                   <ImageIcon color={theme.textTertiary} />
                 </NudeButton>

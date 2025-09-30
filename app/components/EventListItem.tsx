@@ -1,242 +1,174 @@
-import { LocationDescriptor } from "history";
 import { observer } from "mobx-react";
 import {
   TrashIcon,
   ArchiveIcon,
-  EditIcon,
   PublishIcon,
   MoveIcon,
   UnpublishIcon,
+  RestoreIcon,
+  UserIcon,
+  CrossIcon,
 } from "outline-icons";
-import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { useLocation } from "react-router-dom";
 import styled, { css } from "styled-components";
-import EventBoundary from "@shared/components/EventBoundary";
 import { s } from "@shared/styles";
 import Document from "~/models/Document";
 import Event from "~/models/Event";
-import { Avatar } from "~/components/Avatar";
-import Item, { Actions, Props as ItemProps } from "~/components/List/Item";
 import Time from "~/components/Time";
-import useStores from "~/hooks/useStores";
-import RevisionMenu from "~/menus/RevisionMenu";
-import { hover } from "~/styles";
 import Logger from "~/utils/Logger";
-import { documentHistoryPath } from "~/utils/routeHelpers";
+import Text from "./Text";
 
 type Props = {
   document: Document;
-  event: Event;
-  latest?: boolean;
+  item: Event<Document>;
 };
 
-const EventListItem = ({ event, latest, document, ...rest }: Props) => {
+const EventListItem = ({ item }: Props) => {
   const { t } = useTranslation();
-  const { revisions } = useStores();
-  const location = useLocation();
   const opts = {
-    userName: event.actor.name,
+    userName: item.actor?.name,
   };
-  const isRevision = event.name === "revisions.create";
-  let meta, icon, to: LocationDescriptor | undefined;
+  let meta, icon;
 
-  const ref = React.useRef<HTMLAnchorElement>(null);
-  // the time component tends to steal focus when clicked
-  // ...so forward the focus back to the parent item
-  const handleTimeClick = () => {
-    ref.current?.focus();
-  };
-
-  const prefetchRevision = async () => {
-    if (event.name === "revisions.create" && event.modelId) {
-      await revisions.fetch(event.modelId);
-    }
-  };
-
-  switch (event.name) {
-    case "revisions.create":
-      icon = <EditIcon size={16} />;
-      meta = latest ? (
-        <>
-          {t("Current version")} &middot; {event.actor.name}
-        </>
-      ) : (
-        t("{{userName}} edited", opts)
-      );
-      to = {
-        pathname: documentHistoryPath(document, event.modelId || "latest"),
-        state: { retainScrollPosition: true },
-      };
-      break;
-
+  switch (item.name) {
     case "documents.archive":
-      icon = <ArchiveIcon size={16} />;
+      icon = <ArchiveIcon />;
       meta = t("{{userName}} archived", opts);
       break;
 
     case "documents.unarchive":
+      icon = <RestoreIcon />;
       meta = t("{{userName}} restored", opts);
       break;
 
     case "documents.delete":
-      icon = <TrashIcon size={16} />;
+      icon = <TrashIcon />;
       meta = t("{{userName}} deleted", opts);
       break;
     case "documents.add_user":
+      icon = <UserIcon />;
       meta = t("{{userName}} added {{addedUserName}}", {
         ...opts,
-        addedUserName: event.user?.name ?? t("a user"),
+        addedUserName: item.user?.name ?? t("a user"),
       });
       break;
     case "documents.remove_user":
+      icon = <CrossIcon />;
       meta = t("{{userName}} removed {{removedUserName}}", {
         ...opts,
-        removedUserName: event.user?.name ?? t("a user"),
+        removedUserName: item.user?.name ?? t("a user"),
       });
       break;
 
     case "documents.restore":
+      icon = <RestoreIcon />;
       meta = t("{{userName}} moved from trash", opts);
       break;
 
     case "documents.publish":
-      icon = <PublishIcon size={16} />;
+      icon = <PublishIcon />;
       meta = t("{{userName}} published", opts);
       break;
 
     case "documents.unpublish":
-      icon = <UnpublishIcon size={16} />;
+      icon = <UnpublishIcon />;
       meta = t("{{userName}} unpublished", opts);
       break;
 
     case "documents.move":
-      icon = <MoveIcon size={16} />;
+      icon = <MoveIcon />;
       meta = t("{{userName}} moved", opts);
       break;
 
     default:
-      Logger.warn("Unhandled event", { event });
+      Logger.warn("Unhandled item", { item });
   }
 
   if (!meta) {
     return null;
   }
 
-  const isActive =
-    typeof to === "string"
-      ? location.pathname === to
-      : location.pathname === to?.pathname;
-
-  if (document.isDeleted) {
-    to = undefined;
-  }
-
   return (
-    <BaseItem
-      small
-      exact
-      to={to}
-      title={
-        <Time
-          dateTime={event.createdAt}
-          tooltipDelay={500}
-          format={{
-            en_US: "MMM do, h:mm a",
-            fr_FR: "'Le 'd MMMM 'à' H:mm",
-          }}
-          relative={false}
-          addSuffix
-          onClick={handleTimeClick}
-        />
-      }
-      image={<Avatar model={event.actor} size={32} />}
-      subtitle={
-        <Subtitle>
-          {icon}
-          {meta}
-        </Subtitle>
-      }
-      actions={
-        isRevision && isActive && event.modelId && !latest ? (
-          <StyledEventBoundary>
-            <RevisionMenu document={document} revisionId={event.modelId} />
-          </StyledEventBoundary>
-        ) : undefined
-      }
-      onMouseEnter={prefetchRevision}
-      ref={ref}
-      {...rest}
-    />
+    <EventItem>
+      <IconWrapper size="xsmall" type="secondary">
+        {icon}
+      </IconWrapper>
+      <Text size="xsmall" type="secondary">
+        {meta} &middot;{" "}
+        <Time dateTime={item.createdAt} relative shorten addSuffix />
+      </Text>
+    </EventItem>
   );
 };
 
-const BaseItem = React.forwardRef(function _BaseItem(
-  { to, ...rest }: ItemProps,
-  ref?: React.Ref<HTMLAnchorElement>
-) {
-  return <ListItem to={to} ref={ref} {...rest} />;
-});
-
-const StyledEventBoundary = styled(EventBoundary)`
-  height: 24px;
-`;
-
-const Subtitle = styled.span`
-  svg {
-    margin: -3px;
-    margin-right: 2px;
-  }
-`;
-
-const ItemStyle = css`
-  border: 0;
-  position: relative;
-  margin: 8px 0;
-  padding: 8px;
-  border-radius: 8px;
-
-  img {
-    border-color: transparent;
-  }
-
+export const lineStyle = css`
   &::before {
     content: "";
     display: block;
     position: absolute;
-    top: -4px;
-    left: 23px;
-    width: 2px;
-    height: calc(100% + 8px);
-    background: ${s("textSecondary")};
-    opacity: 0.25;
+    top: -8px;
+    left: 22px;
+    width: 1px;
+    height: calc(50% - 14px + 8px);
+    background: ${s("divider")};
+    mix-blend-mode: ${(props) => (props.theme.isDark ? "lighten" : "multiply")};
+    z-index: 1;
   }
 
-  &:nth-child(2)::before {
-    height: 50%;
-    top: auto;
-    bottom: -4px;
-  }
-
-  &:last-child::before {
-    height: 50%;
-  }
-
-  &:first-child:last-child::before {
+  &:first-child::before {
     display: none;
   }
 
-  ${Actions} {
-    opacity: 0.5;
+  &:nth-child(2)::before {
+    display: none;
+  }
 
-    &: ${hover} {
-      opacity: 1;
-    }
+  &::after {
+    content: "";
+    display: block;
+    position: absolute;
+    top: calc(50% + 14px);
+    left: 22px;
+    width: 1px;
+    height: calc(50% - 14px);
+    background: ${s("divider")};
+    mix-blend-mode: ${(props) => (props.theme.isDark ? "lighten" : "multiply")};
+    z-index: 1;
+  }
+
+  &:last-child::after {
+    display: none;
+  }
+
+  h3 + &::before {
+    display: none;
   }
 `;
 
-const ListItem = styled(Item)`
-  ${ItemStyle}
+const IconWrapper = styled(Text)`
+  height: 24px;
+  min-width: 24px;
+`;
+
+export const EventItem = styled.li`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  margin: 8px 0;
+  padding: 4px 10px;
+  white-space: nowrap;
+  position: relative;
+
+  time {
+    white-space: nowrap;
+  }
+
+  svg {
+    flex-shrink: 0;
+  }
+
+  ${lineStyle}
 `;
 
 export default observer(EventListItem);

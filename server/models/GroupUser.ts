@@ -8,6 +8,7 @@ import {
   DataType,
   Scopes,
 } from "sequelize-typescript";
+import { GroupPermission } from "@shared/types";
 import Group from "./Group";
 import User from "./User";
 import Model from "./base/Model";
@@ -42,6 +43,8 @@ class GroupUser extends Model<
   InferAttributes<GroupUser>,
   Partial<InferCreationAttributes<GroupUser>>
 > {
+  static eventNamespace = "groups";
+
   @BelongsTo(() => User, "userId")
   user: User;
 
@@ -62,6 +65,13 @@ class GroupUser extends Model<
   @ForeignKey(() => User)
   @Column(DataType.UUID)
   createdById: string;
+
+  @Column(DataType.ENUM(...Object.values(GroupPermission)))
+  permission: GroupPermission;
+
+  get modelId() {
+    return this.groupId;
+  }
 }
 
 export default GroupUser;

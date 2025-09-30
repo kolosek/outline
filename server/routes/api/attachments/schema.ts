@@ -3,6 +3,17 @@ import { z } from "zod";
 import { AttachmentPreset } from "@shared/types";
 import { BaseSchema } from "@server/routes/api/schema";
 
+export const AttachmentsListSchema = BaseSchema.extend({
+  body: z.object({
+    /** Id of the document to which the Attachment belongs */
+    documentId: z.string().uuid().optional(),
+    /** Id of the user that uploaded the Attachment */
+    userId: z.string().uuid().optional(),
+  }),
+});
+
+export type AttachmentsListReq = z.infer<typeof AttachmentsListSchema>;
+
 export const AttachmentsCreateSchema = BaseSchema.extend({
   body: z.object({
     /** Attachment name */
@@ -18,11 +29,32 @@ export const AttachmentsCreateSchema = BaseSchema.extend({
     contentType: z.string().optional().default("application/octet-stream"),
 
     /** Attachment type */
-    preset: z.nativeEnum(AttachmentPreset),
+    preset: z
+      .nativeEnum(AttachmentPreset)
+      .default(AttachmentPreset.DocumentAttachment),
   }),
 });
 
 export type AttachmentCreateReq = z.infer<typeof AttachmentsCreateSchema>;
+
+export const AttachmentsCreateFromUrlSchema = BaseSchema.extend({
+  body: z.object({
+    /** Attachment url */
+    url: z.string(),
+
+    /** Id of the document to which the Attachment belongs */
+    documentId: z.string().uuid().optional(),
+
+    /** Attachment type */
+    preset: z
+      .nativeEnum(AttachmentPreset)
+      .default(AttachmentPreset.DocumentAttachment),
+  }),
+});
+
+export type AttachmentCreateFromUrlReq = z.infer<
+  typeof AttachmentsCreateFromUrlSchema
+>;
 
 export const AttachmentDeleteSchema = BaseSchema.extend({
   body: z.object({

@@ -1,6 +1,5 @@
 import { m } from "framer-motion";
 import find from "lodash/find";
-import * as React from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
 import { languages, languageOptions } from "@shared/i18n";
@@ -47,14 +46,16 @@ export default function LanguagePrompt() {
           <br />
           <Link
             onClick={async () => {
-              ui.setLanguagePromptDismissed();
+              ui.set({ languagePromptDismissed: true });
               await user.save({ language });
             }}
           >
             {t("Change Language")}
           </Link>{" "}
           &middot;{" "}
-          <Link onClick={ui.setLanguagePromptDismissed}>{t("Dismiss")}</Link>
+          <Link onClick={() => ui.set({ languagePromptDismissed: true })}>
+            {t("Dismiss")}
+          </Link>
         </span>
       </Flex>
     </Wrapper>

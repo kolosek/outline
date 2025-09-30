@@ -1,81 +1,114 @@
 import Router from "koa-router";
 import isUndefined from "lodash/isUndefined";
-import { Op, WhereOptions } from "sequelize";
-import { NotFoundError } from "@server/errors";
+import { FindOptions, Op, WhereAttributeHash, WhereOptions } from "sequelize";
+import { TeamPreference } from "@shared/types";
+import { AuthenticationError, NotFoundError } from "@server/errors";
 import auth from "@server/middlewares/authentication";
+import { rateLimiter } from "@server/middlewares/rateLimiter";
+import { transaction } from "@server/middlewares/transaction";
 import validate from "@server/middlewares/validate";
-import { Document, User, Event, Share, Team, Collection } from "@server/models";
-import { authorize } from "@server/policies";
-import { presentShare, presentPolicies } from "@server/presenters";
+import { Document, User, Share, Team, Collection } from "@server/models";
+import { authorize, cannot } from "@server/policies";
+import {
+  presentShare,
+  presentPolicies,
+  presentPublicTeam,
+  presentCollection,
+  presentDocument,
+} from "@server/presenters";
 import { APIContext } from "@server/types";
+import { RateLimiterStrategy } from "@server/utils/RateLimiter";
+import { getTeamFromContext } from "@server/utils/passport";
+import { navigationNodeToSitemap } from "@server/utils/sitemap";
 import pagination from "../middlewares/pagination";
 import * as T from "./schema";
+import {
+  loadPublicShare,
+  loadShareWithParent,
+} from "@server/commands/shareLoader";
 
 const router = new Router();
 
 router.post(
   "shares.info",
-  auth(),
+  auth({ optional: true }),
   validate(T.SharesInfoSchema),
   async (ctx: APIContext<T.SharesInfoReq>) => {
-    const { id, documentId } = ctx.input.body;
+    const { id, collectionId, documentId } = ctx.input.body;
     const { user } = ctx.state.auth;
-    const shares = [];
-    const share = await Share.scope({
-      method: ["withCollectionPermissions", user.id],
-    }).findOne({
-      where: id
-        ? {
-            id,
-            revokedAt: {
-              [Op.is]: null,
-            },
-          }
-        : {
-            documentId,
-            teamId: user.teamId,
-            revokedAt: {
-              [Op.is]: null,
-            },
-          },
+    const teamFromCtx = await getTeamFromContext(ctx, {
+      includeStateCookie: false,
     });
 
-    // We return the response for the current documentId and any parent documents
-    // that are publicly shared and accessible to the user
-    if (share && share.document) {
-      authorize(user, "read", share);
-      shares.push(share);
-    }
-
-    if (documentId) {
-      const document = await Document.findByPk(documentId, {
-        userId: user.id,
+    // only public link loads will send "id".
+    if (id) {
+      let { share, sharedTree, collection, document } = await loadPublicShare({
+        id,
+        collectionId,
+        documentId,
+        teamId: teamFromCtx?.id,
       });
-      authorize(user, "read", document);
 
-      const collection = await document.$get("collection");
-      const parentIds = collection?.getDocumentParents(documentId);
-      const parentShare = parentIds
-        ? await Share.scope({
-            method: ["withCollectionPermissions", user.id],
-          }).findOne({
-            where: {
-              documentId: parentIds,
-              teamId: user.teamId,
-              revokedAt: {
-                [Op.is]: null,
-              },
-              includeChildDocuments: true,
-              published: true,
-            },
-          })
-        : undefined;
-
-      if (parentShare && parentShare.document) {
-        authorize(user, "read", parentShare);
-        shares.push(parentShare);
+      // reload with membership scope if user is authenticated
+      if (user) {
+        collection = collection
+          ? await Collection.findByPk(collection.id, { userId: user.id })
+          : null;
+        document = document
+          ? await Document.findByPk(document.id, { userId: user.id })
+          : null;
       }
+
+      const team = teamFromCtx?.id === share.teamId ? teamFromCtx : share.team;
+
+      const [serializedCollection, serializedDocument, serializedTeam] =
+        await Promise.all([
+          collection
+            ? await presentCollection(ctx, collection, {
+                isPublic: cannot(user, "read", collection),
+                shareId: share.id,
+                includeUpdatedAt: share.showLastUpdated,
+              })
+            : null,
+          document
+            ? await presentDocument(ctx, document, {
+                isPublic: cannot(user, "read", document),
+                shareId: share.id,
+                includeUpdatedAt: share.showLastUpdated,
+              })
+            : null,
+          presentPublicTeam(
+            team,
+            !!team.getPreference(TeamPreference.PublicBranding)
+          ),
+        ]);
+
+      ctx.body = {
+        data: {
+          shares: [presentShare(share, user?.isAdmin ?? false)],
+          sharedTree: sharedTree,
+          team: serializedTeam,
+          collection: serializedCollection,
+          document: serializedDocument,
+        },
+        policies: presentPolicies(user, [share]),
+      };
+      return;
     }
+
+    // load share with parent for displaying in the share popovers.
+
+    if (!user) {
+      throw AuthenticationError("Authentication required");
+    }
+
+    const { share, parentShare } = await loadShareWithParent({
+      collectionId,
+      documentId,
+      user,
+    });
+
+    const shares = [share, parentShare].filter(Boolean) as Share[];
 
     if (!shares.length) {
       ctx.response.status = 204;
@@ -84,7 +117,7 @@ router.post(
 
     ctx.body = {
       data: {
-        shares: shares.map((share) => presentShare(share, user.isAdmin)),
+        shares: shares.map((s) => presentShare(s, user.isAdmin ?? false)),
       },
       policies: presentPolicies(user, shares),
     };
@@ -97,11 +130,29 @@ router.post(
   pagination(),
   validate(T.SharesListSchema),
   async (ctx: APIContext<T.SharesListReq>) => {
-    const { sort, direction } = ctx.input.body;
+    const { sort, direction, query } = ctx.input.body;
     const { user } = ctx.state.auth;
     authorize(user, "listShares", user.team);
+    const collectionIds = await user.collectionIds();
 
-    const where: WhereOptions<Share> = {
+    const collectionWhere: WhereAttributeHash<Share> = {
+      "$collection.id$": collectionIds,
+      "$collection.teamId$": user.teamId,
+    };
+
+    const documentWhere: WhereAttributeHash<Share> = {
+      "$document.teamId$": user.teamId,
+      "$document.collectionId$": collectionIds,
+    };
+
+    if (query) {
+      collectionWhere["$collection.name$"] = { [Op.iLike]: `%${query}%` };
+      documentWhere["$document.title$"] = {
+        [Op.iLike]: `%${query}%`,
+      };
+    }
+
+    const shareWhere: WhereOptions<Share> = {
       teamId: user.teamId,
       userId: user.id,
       published: true,
@@ -111,48 +162,58 @@ router.post(
     };
 
     if (user.isAdmin) {
-      delete where.userId;
+      delete shareWhere.userId;
     }
 
-    const collectionIds = await user.collectionIds();
+    const options: FindOptions = {
+      where: {
+        ...shareWhere,
+        [Op.or]: [collectionWhere, documentWhere],
+      },
+      include: [
+        {
+          model: Collection.scope({
+            method: ["withMembership", user.id],
+          }),
+          as: "collection",
+          required: false,
+        },
+        {
+          model: Document,
+          required: false,
+          paranoid: true,
+          as: "document",
+          include: [
+            {
+              model: Collection.scope({
+                method: ["withMembership", user.id],
+              }),
+              as: "collection",
+            },
+          ],
+        },
+        {
+          model: User,
+          required: true,
+          as: "user",
+        },
+        {
+          model: Team,
+          required: true,
+          as: "team",
+        },
+      ],
+      subQuery: false,
+    };
 
     const [shares, total] = await Promise.all([
-      Share.findAll({
-        where,
+      Share.unscoped().findAll({
+        ...options,
         order: [[sort, direction]],
-        include: [
-          {
-            model: Document,
-            required: true,
-            paranoid: true,
-            as: "document",
-            where: {
-              collectionId: collectionIds,
-            },
-            include: [
-              {
-                model: Collection.scope({
-                  method: ["withMembership", user.id],
-                }),
-                as: "collection",
-              },
-            ],
-          },
-          {
-            model: User,
-            required: true,
-            as: "user",
-          },
-          {
-            model: Team,
-            required: true,
-            as: "team",
-          },
-        ],
         offset: ctx.state.pagination.offset,
         limit: ctx.state.pagination.limit,
       }),
-      Share.count({ where }),
+      Share.count(options),
     ]);
 
     ctx.body = {
@@ -167,27 +228,43 @@ router.post(
   "shares.create",
   auth(),
   validate(T.SharesCreateSchema),
+  transaction(),
   async (ctx: APIContext<T.SharesCreateReq>) => {
-    const { documentId, published, urlId, includeChildDocuments } =
-      ctx.input.body;
+    const {
+      collectionId,
+      documentId,
+      published,
+      urlId,
+      includeChildDocuments,
+      allowIndexing,
+      showLastUpdated,
+    } = ctx.input.body;
     const { user } = ctx.state.auth;
     authorize(user, "createShare", user.team);
 
-    const document = await Document.findByPk(documentId, {
-      userId: user.id,
-    });
+    const collection = collectionId
+      ? await Collection.findByPk(collectionId, {
+          userId: user.id,
+        })
+      : null;
+    const document = documentId
+      ? await Document.findByPk(documentId, {
+          userId: user.id,
+        })
+      : null;
 
     // user could be creating the share link to share with team members
-    authorize(user, "read", document);
+    authorize(user, "read", collectionId ? collection : document);
 
     if (published) {
       authorize(user, "share", user.team);
-      authorize(user, "share", document);
+      authorize(user, "share", collectionId ? collection : document);
     }
 
-    const [share, isCreated] = await Share.findOrCreate({
+    const [share] = await Share.findOrCreateWithCtx(ctx, {
       where: {
-        documentId,
+        collectionId: collectionId ?? null,
+        documentId: documentId ?? null,
         teamId: user.teamId,
         revokedAt: null,
       },
@@ -195,27 +272,15 @@ router.post(
         userId: user.id,
         published,
         includeChildDocuments,
+        allowIndexing,
+        showLastUpdated,
         urlId,
       },
     });
 
-    if (isCreated) {
-      await Event.createFromContext(ctx, {
-        name: "shares.create",
-        documentId,
-        collectionId: document.collectionId,
-        modelId: share.id,
-        data: {
-          name: document.title,
-          published,
-          includeChildDocuments,
-          urlId,
-        },
-      });
-    }
-
     share.team = user.team;
     share.user = user;
+    share.collection = collection;
     share.document = document;
 
     ctx.body = {
@@ -229,8 +294,16 @@ router.post(
   "shares.update",
   auth(),
   validate(T.SharesUpdateSchema),
+  transaction(),
   async (ctx: APIContext<T.SharesUpdateReq>) => {
-    const { id, includeChildDocuments, published, urlId } = ctx.input.body;
+    const {
+      id,
+      includeChildDocuments,
+      published,
+      urlId,
+      allowIndexing,
+      showLastUpdated,
+    } = ctx.input.body;
 
     const { user } = ctx.state.auth;
     authorize(user, "share", user.team);
@@ -257,15 +330,15 @@ router.post(
       share.urlId = urlId;
     }
 
-    await share.save();
-    await Event.createFromContext(ctx, {
-      name: "shares.update",
-      documentId: share.documentId,
-      modelId: share.id,
-      data: {
-        published,
-      },
-    });
+    if (allowIndexing !== undefined) {
+      share.allowIndexing = allowIndexing;
+    }
+
+    if (showLastUpdated !== undefined) {
+      share.showLastUpdated = showLastUpdated;
+    }
+
+    await share.saveWithCtx(ctx);
 
     ctx.body = {
       data: presentShare(share, user.isAdmin),
@@ -278,32 +351,46 @@ router.post(
   "shares.revoke",
   auth(),
   validate(T.SharesRevokeSchema),
+  transaction(),
   async (ctx: APIContext<T.SharesRevokeReq>) => {
     const { id } = ctx.input.body;
     const { user } = ctx.state.auth;
     const share = await Share.findByPk(id);
 
-    if (!share?.document) {
+    if (!share?.collection && !share?.document) {
       throw NotFoundError();
     }
 
     authorize(user, "revoke", share);
-    const { document } = share;
 
-    await share.revoke(user.id);
-    await Event.createFromContext(ctx, {
-      name: "shares.revoke",
-      documentId: document.id,
-      collectionId: document.collectionId,
-      modelId: share.id,
-      data: {
-        name: document.title,
-      },
-    });
+    await share.revoke(ctx);
 
     ctx.body = {
       success: true,
     };
+  }
+);
+
+router.get(
+  "shares.sitemap",
+  rateLimiter(RateLimiterStrategy.TwentyFivePerMinute),
+  validate(T.SharesSitemapSchema),
+  async (ctx: APIContext<T.SharesSitemapReq>) => {
+    const { id } = ctx.input.query;
+    const team = await getTeamFromContext(ctx, { includeStateCookie: false });
+
+    const { share, sharedTree } = await loadPublicShare({
+      id,
+      teamId: team?.id,
+    });
+
+    const baseUrl = `${process.env.URL}/s/${id}`;
+
+    ctx.set("Content-Type", "application/xml");
+    ctx.body = navigationNodeToSitemap(
+      share.allowIndexing ? sharedTree : undefined,
+      baseUrl
+    );
   }
 );
 

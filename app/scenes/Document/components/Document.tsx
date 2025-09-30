@@ -4,7 +4,7 @@ import isEqual from "lodash/isEqual";
 import { action, observable } from "mobx";
 import { observer } from "mobx-react";
 import { Node } from "prosemirror-model";
-import { AllSelection } from "prosemirror-state";
+import { AllSelection, TextSelection } from "prosemirror-state";
 import * as React from "react";
 import { WithTranslation, withTranslation } from "react-i18next";
 import {
@@ -25,29 +25,29 @@ import {
   TOCPosition,
   TeamPreference,
 } from "@shared/types";
-import { ProsemirrorHelper, Heading } from "@shared/utils/ProsemirrorHelper";
+import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
+import { TextHelper } from "@shared/utils/TextHelper";
 import { parseDomain } from "@shared/utils/domains";
 import { determineIconType } from "@shared/utils/icon";
+import { isModKey } from "@shared/utils/keyboard";
 import RootStore from "~/stores/RootStore";
 import Document from "~/models/Document";
 import Revision from "~/models/Revision";
+import ConnectionStatus from "~/scenes/Document/components/ConnectionStatus";
 import DocumentMove from "~/scenes/DocumentMove";
 import DocumentPublish from "~/scenes/DocumentPublish";
 import Branding from "~/components/Branding";
-import ConnectionStatus from "~/components/ConnectionStatus";
 import ErrorBoundary from "~/components/ErrorBoundary";
 import LoadingIndicator from "~/components/LoadingIndicator";
 import PageTitle from "~/components/PageTitle";
 import PlaceholderDocument from "~/components/PlaceholderDocument";
 import RegisterKeyDown from "~/components/RegisterKeyDown";
+import { SidebarContextType } from "~/components/Sidebar/components/SidebarContext";
 import withStores from "~/components/withStores";
 import type { Editor as TEditor } from "~/editor";
-import { SearchResult } from "~/editor/components/LinkEditor";
+import { Properties } from "~/types";
 import { client } from "~/utils/ApiClient";
-import { replaceTitleVariables } from "~/utils/date";
 import { emojiToUrl } from "~/utils/emoji";
-import { isModKey } from "~/utils/keyboard";
-
 import {
   documentHistoryPath,
   documentEditPath,
@@ -58,12 +58,12 @@ import Contents from "./Contents";
 import Editor from "./Editor";
 import Header from "./Header";
 import KeyboardShortcutsButton from "./KeyboardShortcutsButton";
-import MarkAsViewed from "./MarkAsViewed";
 import { MeasuredContainer } from "./MeasuredContainer";
 import Notices from "./Notices";
 import PublicReferences from "./PublicReferences";
 import References from "./References";
 import RevisionViewer from "./RevisionViewer";
+import { SizeWarning } from "./SizeWarning";
 
 const AUTOSAVE_DELAY = 3000;
 
@@ -77,6 +77,7 @@ type LocationState = {
   title?: string;
   restore?: boolean;
   revisionId?: string;
+  sidebarContext?: SidebarContextType;
 };
 
 type Props = WithTranslation &
@@ -88,9 +89,11 @@ type Props = WithTranslation &
     revision?: Revision;
     readOnly: boolean;
     shareId?: string;
-    tocPosition?: TOCPosition;
-    onCreateLink?: (title: string, nested?: boolean) => Promise<string>;
-    onSearchLink?: (term: string) => Promise<SearchResult[]>;
+    tocPosition?: TOCPosition | false;
+    onCreateLink?: (
+      params: Properties<Document>,
+      nested?: boolean
+    ) => Promise<string>;
   };
 
 @observer
@@ -115,9 +118,6 @@ class DocumentScene extends React.Component<Props> {
 
   @observable
   title: string = this.props.document.title;
-
-  @observable
-  headings: Heading[] = [];
 
   componentDidMount() {
     this.updateIsDirty();
@@ -146,7 +146,17 @@ class DocumentScene extends React.Component<Props> {
     }
   }
 
-  replaceDocument = (template: Document | Revision) => {
+  /**
+   * Replaces the given selection with a template, if no selection is provided
+   * then the template is inserted at the beginning of the document.
+   *
+   * @param template The template to use
+   * @param selection The selection to replace, if any
+   */
+  replaceSelection = (
+    template: Document | Revision,
+    selection?: TextSelection | AllSelection
+  ) => {
     const editorRef = this.editor.current;
 
     if (!editorRef) {
@@ -154,26 +164,30 @@ class DocumentScene extends React.Component<Props> {
     }
 
     const { view, schema } = editorRef;
-    const doc = Node.fromJSON(schema, template.data);
+    const sel = selection ?? TextSelection.near(view.state.doc.resolve(0));
+    const doc = Node.fromJSON(
+      schema,
+      ProsemirrorHelper.replaceTemplateVariables(
+        template.data,
+        this.props.auth.user!
+      )
+    );
 
     if (doc) {
-      view.dispatch(
-        view.state.tr
-          .setSelection(new AllSelection(view.state.doc))
-          .replaceSelectionWith(doc)
-      );
+      view.dispatch(view.state.tr.setSelection(sel).replaceSelectionWith(doc));
     }
 
     this.isEditorDirty = true;
 
     if (template instanceof Document) {
       this.props.document.templateId = template.id;
+      this.props.document.fullWidth = template.fullWidth;
     }
 
     if (!this.title) {
-      const title = replaceTitleVariables(
+      const title = TextHelper.replaceTemplateVariables(
         template.title,
-        this.props.auth.user || undefined
+        this.props.auth.user!
       );
       this.title = title;
       this.props.document.title = title;
@@ -210,7 +224,10 @@ class DocumentScene extends React.Component<Props> {
     });
 
     if (response) {
-      await this.replaceDocument(response.data);
+      await this.replaceSelection(
+        response.data,
+        new AllSelection(editorRef.view.state.doc)
+      );
       toast.success(t("Document restored"));
       history.replace(this.props.document.url, history.location.state);
     }
@@ -218,13 +235,15 @@ class DocumentScene extends React.Component<Props> {
 
   onUndoRedo = (event: KeyboardEvent) => {
     if (isModKey(event)) {
+      event.preventDefault();
+
       if (event.shiftKey) {
-        if (this.editor.current?.redo()) {
-          event.preventDefault();
+        if (!this.props.readOnly) {
+          this.editor.current?.commands.redo();
         }
       } else {
-        if (this.editor.current?.undo()) {
-          event.preventDefault();
+        if (!this.props.readOnly) {
+          this.editor.current?.commands.undo();
         }
       }
     }
@@ -247,7 +266,10 @@ class DocumentScene extends React.Component<Props> {
       const { document, abilities } = this.props;
 
       if (abilities.update) {
-        this.props.history.push(documentEditPath(document));
+        this.props.history.push({
+          pathname: documentEditPath(document),
+          state: { sidebarContext: this.props.location.state?.sidebarContext },
+        });
       }
     } else if (this.editor.current?.isBlurred) {
       ev.preventDefault();
@@ -266,9 +288,15 @@ class DocumentScene extends React.Component<Props> {
     const { document, location } = this.props;
 
     if (location.pathname.endsWith("history")) {
-      this.props.history.push(document.url);
+      this.props.history.push({
+        pathname: document.url,
+        state: { sidebarContext: this.props.location.state?.sidebarContext },
+      });
     } else {
-      this.props.history.push(documentHistoryPath(document));
+      this.props.history.push({
+        pathname: documentHistoryPath(document),
+        state: { sidebarContext: this.props.location.state?.sidebarContext },
+      });
     }
   };
 
@@ -334,10 +362,16 @@ class DocumentScene extends React.Component<Props> {
       this.isEditorDirty = false;
 
       if (options.done) {
-        this.props.history.push(savedDocument.url);
+        this.props.history.push({
+          pathname: savedDocument.url,
+          state: { sidebarContext: this.props.location.state?.sidebarContext },
+        });
         this.props.ui.setActiveDocument(savedDocument);
       } else if (document.isNew) {
-        this.props.history.push(documentEditPath(savedDocument));
+        this.props.history.push({
+          pathname: documentEditPath(savedDocument),
+          state: { sidebarContext: this.props.location.state?.sidebarContext },
+        });
         this.props.ui.setActiveDocument(savedDocument);
       }
     } catch (err) {
@@ -357,38 +391,23 @@ class DocumentScene extends React.Component<Props> {
     AUTOSAVE_DELAY
   );
 
-  updateIsDirty = () => {
+  updateIsDirty = action(() => {
     const { document } = this.props;
     const doc = this.editor.current?.view.state.doc;
-    this.isEditorDirty = !isEqual(doc?.toJSON(), document.data);
 
-    // a single hash is a doc with just an empty title
+    this.isEditorDirty = !isEqual(doc?.toJSON(), document.data);
     this.isEmpty = (!doc || ProsemirrorHelper.isEmpty(doc)) && !this.title;
-  };
+  });
 
   updateIsDirtyDebounced = debounce(this.updateIsDirty, 500);
 
-  onFileUploadStart = () => {
+  onFileUploadStart = action(() => {
     this.isUploading = true;
-  };
+  });
 
-  onFileUploadStop = () => {
+  onFileUploadStop = action(() => {
     this.isUploading = false;
-  };
-
-  handleChange = () => {
-    const { document } = this.props;
-
-    // Keep derived task list in sync
-    const tasks = this.editor.current?.getTasks();
-    const total = tasks?.length ?? 0;
-    const completed = tasks?.filter((t) => t.completed).length ?? 0;
-    document.updateTasks(total, completed);
-  };
-
-  onHeadingsChange = (headings: Heading[]) => {
-    this.headings = headings;
-  };
+  });
 
   handleChangeTitle = action((value: string) => {
     this.title = value;
@@ -405,7 +424,10 @@ class DocumentScene extends React.Component<Props> {
 
   goBack = () => {
     if (!this.props.readOnly) {
-      this.props.history.push(this.props.document.url);
+      this.props.history.push({
+        pathname: this.props.document.url,
+        state: { sidebarContext: this.props.location.state?.sidebarContext },
+      });
     }
   };
 
@@ -426,13 +448,20 @@ class DocumentScene extends React.Component<Props> {
     const embedsDisabled =
       (team && team.documentEmbeds === false) || document.embedsDisabled;
 
-    const hasHeadings = this.headings.length > 0;
-    const showContents =
-      ui.tocVisible === true || (isShare && ui.tocVisible !== false);
     const tocPos =
       tocPosition ??
       ((team?.getPreference(TeamPreference.TocPosition) as TOCPosition) ||
         TOCPosition.Left);
+    const showContents =
+      tocPos &&
+      (isShare
+        ? ui.tocVisible !== false
+        : !document.isTemplate && ui.tocVisible === true);
+    const tocOffset =
+      tocPos === TOCPosition.Left
+        ? EditorStyleHelper.tocWidth / -2
+        : EditorStyleHelper.tocWidth / 2;
+
     const multiplayerEditor =
       !document.isArchived && !document.isDeleted && !revision && !isShare;
 
@@ -445,6 +474,10 @@ class DocumentScene extends React.Component<Props> {
       ? document.titleWithDefault.replace(document.icon!, "")
       : document.titleWithDefault;
     const favicon = hasEmojiInTitle ? emojiToUrl(document.icon!) : undefined;
+
+    const fullWidthTransformOffsetStyle = {
+      ["--full-width-transform-offset"]: `${document.fullWidth && showContents ? tocOffset : 0}px`,
+    } as React.CSSProperties;
 
     return (
       <ErrorBoundary showTitle>
@@ -493,7 +526,6 @@ class DocumentScene extends React.Component<Props> {
             )}
             <Header
               document={document}
-              documentHasHeadings={hasHeadings}
               revision={revision}
               shareId={shareId}
               isDraft={document.isDraft}
@@ -505,11 +537,14 @@ class DocumentScene extends React.Component<Props> {
               }
               savingIsDisabled={document.isSaving || this.isEmpty}
               sharedTree={this.props.sharedTree}
-              onSelectTemplate={this.replaceDocument}
+              onSelectTemplate={this.replaceSelection}
               onSave={this.onSave}
-              headings={this.headings}
             />
-            <Main fullWidth={document.fullWidth} tocPosition={tocPos}>
+            <Main
+              fullWidth={document.fullWidth}
+              tocPosition={tocPos}
+              style={fullWidthTransformOffsetStyle}
+            >
               <React.Suspense
                 fallback={
                   <EditorContainer
@@ -531,14 +566,6 @@ class DocumentScene extends React.Component<Props> {
                   </RevisionContainer>
                 ) : (
                   <>
-                    {showContents && (
-                      <ContentsContainer
-                        docFullWidth={document.fullWidth}
-                        position={tocPos}
-                      >
-                        <Contents headings={this.headings} />
-                      </ContentsContainer>
-                    )}
                     <MeasuredContainer
                       name="document"
                       as={EditorContainer}
@@ -548,6 +575,11 @@ class DocumentScene extends React.Component<Props> {
                     >
                       <Notices document={document} readOnly={readOnly} />
 
+                      {showContents && (
+                        <PrintContentsContainer>
+                          <Contents />
+                        </PrintContentsContainer>
+                      )}
                       <Editor
                         id={document.id}
                         key={embedsDisabled ? "disabled" : "enabled"}
@@ -563,20 +595,18 @@ class DocumentScene extends React.Component<Props> {
                         onSynced={this.onSynced}
                         onFileUploadStart={this.onFileUploadStart}
                         onFileUploadStop={this.onFileUploadStop}
-                        onSearchLink={this.props.onSearchLink}
                         onCreateLink={this.props.onCreateLink}
                         onChangeTitle={this.handleChangeTitle}
                         onChangeIcon={this.handleChangeIcon}
-                        onChange={this.handleChange}
-                        onHeadingsChange={this.onHeadingsChange}
                         onSave={this.onSave}
                         onPublish={this.onPublish}
                         onCancel={this.goBack}
                         readOnly={readOnly}
                         canUpdate={abilities.update}
                         canComment={abilities.comment}
+                        autoFocus={document.createdAt === document.updatedAt}
                       >
-                        {shareId && (
+                        {shareId ? (
                           <ReferencesWrapper>
                             <PublicReferences
                               shareId={shareId}
@@ -584,17 +614,21 @@ class DocumentScene extends React.Component<Props> {
                               sharedTree={this.props.sharedTree}
                             />
                           </ReferencesWrapper>
-                        )}
-                        {!isShare && !revision && (
-                          <>
-                            <MarkAsViewed document={document} />
-                            <ReferencesWrapper>
-                              <References document={document} />
-                            </ReferencesWrapper>
-                          </>
-                        )}
+                        ) : !revision ? (
+                          <ReferencesWrapper>
+                            <References document={document} />
+                          </ReferencesWrapper>
+                        ) : null}
                       </Editor>
                     </MeasuredContainer>
+                    {showContents && (
+                      <ContentsContainer
+                        docFullWidth={document.fullWidth}
+                        position={tocPos}
+                      >
+                        <Contents />
+                      </ContentsContainer>
+                    )}
                   </>
                 )}
               </React.Suspense>
@@ -609,6 +643,7 @@ class DocumentScene extends React.Component<Props> {
             <Footer>
               <KeyboardShortcutsButton />
               <ConnectionStatus />
+              <SizeWarning document={document} />
             </Footer>
           )}
         </MeasuredContainer>
@@ -619,7 +654,7 @@ class DocumentScene extends React.Component<Props> {
 
 type MainProps = {
   fullWidth: boolean;
-  tocPosition: TOCPosition;
+  tocPosition: TOCPosition | false;
 };
 
 const Main = styled.div<MainProps>`
@@ -632,7 +667,7 @@ const Main = styled.div<MainProps>`
         ? tocPosition === TOCPosition.Left
           ? `${EditorStyleHelper.tocWidth}px minmax(0, 1fr)`
           : `minmax(0, 1fr) ${EditorStyleHelper.tocWidth}px`
-        : `1fr minmax(0, ${`calc(46em + 76px)`}) 1fr`};
+        : `1fr minmax(0, ${`calc(46em + 88px)`}) 1fr`};
   `};
 
   ${breakpoint("desktopLarge")`
@@ -641,13 +676,13 @@ const Main = styled.div<MainProps>`
         ? tocPosition === TOCPosition.Left
           ? `${EditorStyleHelper.tocWidth}px minmax(0, 1fr)`
           : `minmax(0, 1fr) ${EditorStyleHelper.tocWidth}px`
-        : `1fr minmax(0, ${`calc(52em + 76px)`}) 1fr`};
+        : `1fr minmax(0, ${`calc(52em + 88px)`}) 1fr`};
   `};
 `;
 
 type ContentsContainerProps = {
   docFullWidth: boolean;
-  position: TOCPosition;
+  position: TOCPosition | false;
 };
 
 const ContentsContainer = styled.div<ContentsContainerProps>`
@@ -660,17 +695,30 @@ const ContentsContainer = styled.div<ContentsContainerProps>`
     justify-self: ${({ position }: ContentsContainerProps) =>
       position === TOCPosition.Left ? "end" : "start"};
   `};
+
+  @media print {
+    display: none;
+  }
+`;
+
+const PrintContentsContainer = styled.div`
+  display: none;
+  margin: 0 -12px;
+
+  @media print {
+    display: block;
+  }
 `;
 
 type EditorContainerProps = {
   docFullWidth: boolean;
   showContents: boolean;
-  tocPosition: TOCPosition;
+  tocPosition: TOCPosition | false;
 };
 
 const EditorContainer = styled.div<EditorContainerProps>`
   // Adds space to the gutter to make room for icon & heading annotations
-  padding: 0 40px;
+  padding: 0 44px;
 
   ${breakpoint("tablet")`
     grid-row: 1;
@@ -707,21 +755,22 @@ const RevisionContainer = styled.div<RevisionContainerProps>`
 `;
 
 const Footer = styled.div`
-  position: absolute;
-  width: 100%;
+  position: fixed;
+  bottom: 12px;
+  right: 20px;
   text-align: right;
   display: flex;
   justify-content: flex-end;
+  gap: 20px;
 `;
 
 const Background = styled(Container)`
   position: relative;
   background: ${s("background")};
-  transition: ${s("backgroundTransition")};
 `;
 
 const ReferencesWrapper = styled.div`
-  margin-top: 16px;
+  margin: 12px 0;
 
   @media print {
     display: none;

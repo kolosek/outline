@@ -1,19 +1,19 @@
-import { CrossIcon, DownloadIcon } from "outline-icons";
+import { CrossIcon, DownloadIcon, GlobeIcon } from "outline-icons";
 import type { EditorView } from "prosemirror-view";
 import * as React from "react";
 import styled from "styled-components";
 import Flex from "../../components/Flex";
 import { s } from "../../styles";
-import { sanitizeUrl } from "../../utils/urls";
+import { isExternalUrl, sanitizeUrl } from "../../utils/urls";
 import { EditorStyleHelper } from "../styles/EditorStyleHelper";
 import { ComponentProps } from "../types";
-import { ImageZoom } from "./ImageZoom";
 import { ResizeLeft, ResizeRight } from "./ResizeHandle";
 import useDragResize from "./hooks/useDragResize";
+import { useTranslation } from "react-i18next";
 
 type Props = ComponentProps & {
   /** Callback triggered when the image is clicked */
-  onClick: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onClick: () => void;
   /** Callback triggered when the download button is clicked */
   onDownload?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   /** Callback triggered when the image is resized */
@@ -24,13 +24,15 @@ type Props = ComponentProps & {
 };
 
 const Image = (props: Props) => {
-  const { isSelected, node, isEditable, onChangeSize } = props;
+  const { isSelected, node, isEditable, onChangeSize, onClick } = props;
   const { src, layoutClass } = node.attrs;
+  const { t } = useTranslation();
   const className = layoutClass ? `image image-${layoutClass}` : "image";
   const [loaded, setLoaded] = React.useState(false);
   const [error, setError] = React.useState(false);
   const [naturalWidth, setNaturalWidth] = React.useState(node.attrs.width);
   const [naturalHeight, setNaturalHeight] = React.useState(node.attrs.height);
+  const lastTapTimeRef = React.useRef(0);
   const ref = React.useRef<HTMLDivElement>(null);
   const { width, height, setSize, handlePointerDown, dragging } = useDragResize(
     {
@@ -57,36 +59,72 @@ const Image = (props: Props) => {
     }
   }, [node.attrs.width]);
 
+  const sanitizedSrc = sanitizeUrl(src);
+
+  const handleOpen = React.useCallback(() => {
+    window.open(sanitizedSrc, "_blank");
+  }, [sanitizedSrc]);
+
   const widthStyle = isFullWidth
     ? { width: "var(--container-width)" }
     : { width: width || "auto" };
+
+  const handleImageTouchStart = (ev: React.TouchEvent<HTMLDivElement>) => {
+    const currentTime = Date.now();
+    const timeSinceLastTap = currentTime - lastTapTimeRef.current;
+
+    if (timeSinceLastTap < 300 && isSelected) {
+      ev.preventDefault();
+      onClick();
+    }
+
+    lastTapTimeRef.current = currentTime;
+  };
+
+  const handleImageClick = (ev: React.MouseEvent<HTMLDivElement>) => {
+    if (!isEditable || isSelected) {
+      ev.preventDefault();
+      onClick();
+    }
+  };
 
   return (
     <div contentEditable={false} className={className} ref={ref}>
       <ImageWrapper
         isFullWidth={isFullWidth}
         className={isSelected || dragging ? "ProseMirror-selectednode" : ""}
-        onClick={dragging ? undefined : props.onClick}
         style={widthStyle}
       >
         {!dragging && width > 60 && isDownloadable && (
-          <Button onClick={props.onDownload}>
-            <DownloadIcon />
-          </Button>
+          <Actions>
+            {isExternalUrl(src) && (
+              <Button onClick={handleOpen} aria-label={t("Open")}>
+                <GlobeIcon />
+              </Button>
+            )}
+            <Button onClick={props.onDownload} aria-label={t("Download")}>
+              <DownloadIcon />
+            </Button>
+          </Actions>
         )}
         {error ? (
           <Error style={widthStyle} className={EditorStyleHelper.imageHandle}>
             <CrossIcon size={16} /> Image failed to load
           </Error>
         ) : (
-          <ImageZoom caption={props.node.attrs.alt}>
+          <>
             <img
               className={EditorStyleHelper.imageHandle}
               style={{
                 ...widthStyle,
                 display: loaded ? "block" : "none",
+                pointerEvents:
+                  dragging || (!props.isSelected && props.isEditable)
+                    ? "none"
+                    : "all",
               }}
-              src={sanitizeUrl(src) ?? ""}
+              src={sanitizedSrc}
+              alt={node.attrs.alt || ""}
               onError={() => {
                 setError(true);
                 setLoaded(true);
@@ -108,6 +146,8 @@ const Image = (props: Props) => {
                   }));
                 }
               }}
+              onClick={handleImageClick}
+              onTouchStart={handleImageTouchStart}
             />
             {!loaded && width && height && (
               <img
@@ -120,7 +160,7 @@ const Image = (props: Props) => {
                 )}`}
               />
             )}
-          </ImageZoom>
+          </>
         )}
         {isEditable && !isFullWidth && isResizable && (
           <>
@@ -146,11 +186,11 @@ function getPlaceholder(width: number, height: number) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" />`;
 }
 
-const Error = styled(Flex)`
+export const Error = styled(Flex)`
   max-width: 100%;
   color: ${s("textTertiary")};
   font-size: 14px;
-  background: ${s("secondaryBackground")};
+  background: ${s("backgroundSecondary")};
   border-radius: 4px;
   min-width: 33vw;
   height: 80px;
@@ -159,10 +199,22 @@ const Error = styled(Flex)`
   user-select: none;
 `;
 
-const Button = styled.button`
+const Actions = styled.div`
+  display: flex;
+  align-items: center;
   position: absolute;
+  gap: 1px;
   top: 8px;
   right: 8px;
+  opacity: 0;
+  transition: opacity 150ms ease-in-out;
+
+  &:hover {
+    opacity: 1;
+  }
+`;
+
+const Button = styled.button`
   border: 0;
   margin: 0;
   padding: 0;
@@ -172,9 +224,18 @@ const Button = styled.button`
   width: 24px;
   height: 24px;
   display: inline-block;
-  cursor: var(--pointer);
-  opacity: 0;
+  cursor: var(--pointer) !important;
   transition: opacity 150ms ease-in-out;
+
+  &:first-child:not(:last-child) {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  &:last-child:not(:first-child) {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
 
   &:active {
     transform: scale(0.98);
@@ -182,7 +243,6 @@ const Button = styled.button`
 
   &:hover {
     color: ${s("text")};
-    opacity: 1;
   }
 `;
 
@@ -204,7 +264,7 @@ const ImageWrapper = styled.div<{ isFullWidth: boolean }>`
   }
 
   &:hover {
-    ${Button} {
+    ${Actions} {
       opacity: 0.9;
     }
 

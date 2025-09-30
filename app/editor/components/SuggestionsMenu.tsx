@@ -1,8 +1,9 @@
+import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import commandScore from "command-score";
 import capitalize from "lodash/capitalize";
+import orderBy from "lodash/orderBy";
 import * as React from "react";
-import { Trans } from "react-i18next";
-import { VisuallyHidden } from "reakit/VisuallyHidden";
+import { Trans, useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import styled from "styled-components";
 import insertFiles from "@shared/editor/commands/insertFiles";
@@ -19,6 +20,7 @@ import useDictionary from "~/hooks/useDictionary";
 import Logger from "~/utils/Logger";
 import { useEditor } from "./EditorContext";
 import Input from "./Input";
+import { MenuHeader } from "~/components/primitives/components/Menu";
 
 type TopAnchor = {
   top: number;
@@ -78,8 +80,9 @@ export type Props<T extends MenuItem = MenuItem> = {
 };
 
 function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
-  const { view, commands } = useEditor();
+  const { view, commands, props: editorProps } = useEditor();
   const dictionary = useDictionary();
+  const { t } = useTranslation();
   const hasActivated = React.useRef(false);
   const pointerRef = React.useRef<{ clientX: number; clientY: number }>({
     clientX: 0,
@@ -230,7 +233,9 @@ function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
       const attrs =
         typeof item.attrs === "function" ? item.attrs(view.state) : item.attrs;
 
-      if (command) {
+      if (item.name === "noop") {
+        // Do nothing
+      } else if (command) {
         command(attrs);
       } else {
         commands[`create${capitalize(item.name)}`](attrs);
@@ -250,6 +255,16 @@ function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
       props.onSelect?.(item);
 
       switch (item.name) {
+        case "link":
+          insertNode({
+            ...item,
+            name: "mention",
+          });
+          void editorProps.onCreateLink?.({
+            title: item.attrs.label,
+            id: item.attrs.modelId,
+          });
+          return;
         case "image":
           return triggerFilePick(
             AttachmentValidation.imageContentTypes.join(", ")
@@ -264,7 +279,7 @@ function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
           insertNode(item);
       }
     },
-    [insertNode]
+    [editorProps, props, insertNode]
   );
 
   const close = React.useCallback(() => {
@@ -414,11 +429,16 @@ function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
         return true;
       }
 
+      if (item.visible === false) {
+        return false;
+      }
+
       // Some extensions may be disabled, remove corresponding menu items
       if (
         item.name &&
         !commands[item.name] &&
-        !commands[`create${capitalize(item.name)}`]
+        !commands[`create${capitalize(item.name)}`] &&
+        item.name !== "noop"
       ) {
         return false;
       }
@@ -445,16 +465,22 @@ function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
     });
 
     return filterExcessSeparators(
-      filtered
-        .map((item) => ({
+      orderBy(
+        filtered.map((item) => ({
           item,
+          section:
+            "section" in item && item.section && "priority" in item.section
+              ? ((item.section.priority as number) ?? 0)
+              : 0,
+          priority: "priority" in item ? item.priority : 0,
           score:
             searchInput && item.title
               ? commandScore(item.title, searchInput)
               : 0,
-        }))
-        .sort((a, b) => b.score - a.score)
-        .map(({ item }) => item)
+        })),
+        ["section", "priority", "score"],
+        ["desc", "desc", "desc"]
+      ).map(({ item }) => item)
     );
   }, [commands, props]);
 
@@ -555,6 +581,7 @@ function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
 
   const { isActive, uploadFile } = props;
   const items = filtered;
+  let previousHeading: string | undefined;
 
   return (
     <Portal>
@@ -566,11 +593,11 @@ function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
                 <LinkInput
                   type="text"
                   placeholder={
-                    "placeholder" in insertItem
+                    "placeholder" in insertItem && !!insertItem.placeholder
                       ? insertItem.placeholder
                       : insertItem.title
-                      ? dictionary.pasteLinkWithTitle(insertItem.title)
-                      : dictionary.pasteLink
+                        ? dictionary.pasteLinkWithTitle(insertItem.title)
+                        : dictionary.pasteLink
                   }
                   onKeyDown={handleLinkInputKeydown}
                   onPaste={handleLinkInputPaste}
@@ -614,18 +641,30 @@ function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
                     }
                   };
 
-                  return (
-                    <ListItem
-                      key={index}
-                      onPointerMove={handlePointerMove}
-                      onPointerDown={handlePointerDown}
-                    >
-                      {props.renderMenuItem(item as any, index, {
-                        selected: index === selectedIndex,
-                        onClick: () => handleClickItem(item),
-                      })}
-                    </ListItem>
+                  const currentHeading =
+                    "section" in item ? item.section?.({ t }) : undefined;
+
+                  const response = (
+                    <React.Fragment key={`${index}-${item.name}`}>
+                      {currentHeading !== previousHeading && (
+                        <MenuHeader key={currentHeading}>
+                          {currentHeading}
+                        </MenuHeader>
+                      )}
+                      <ListItem
+                        onPointerMove={handlePointerMove}
+                        onPointerDown={handlePointerDown}
+                      >
+                        {props.renderMenuItem(item as any, index, {
+                          selected: index === selectedIndex,
+                          onClick: () => handleClickItem(item),
+                        })}
+                      </ListItem>
+                    </React.Fragment>
                   );
+
+                  previousHeading = currentHeading;
+                  return response;
                 })}
                 {items.length === 0 && (
                   <ListItem>
@@ -635,7 +674,7 @@ function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
               </List>
             )}
             {uploadFile && (
-              <VisuallyHidden>
+              <VisuallyHidden.Root>
                 <label>
                   <Trans>Import document</Trans>
                   <input
@@ -645,7 +684,7 @@ function SuggestionsMenu<T extends MenuItem>(props: Props<T>) {
                     multiple
                   />
                 </label>
-              </VisuallyHidden>
+              </VisuallyHidden.Root>
             )}
           </>
         )}
@@ -703,11 +742,14 @@ export const Wrapper = styled(Scrollable)<{
   left: ${(props) => props.left}px;
   background: ${s("menuBackground")};
   border-radius: 6px;
-  box-shadow: rgba(0, 0, 0, 0.05) 0px 0px 0px 1px,
-    rgba(0, 0, 0, 0.08) 0px 4px 8px, rgba(0, 0, 0, 0.08) 0px 2px 4px;
+  box-shadow:
+    rgba(0, 0, 0, 0.05) 0px 0px 0px 1px,
+    rgba(0, 0, 0, 0.08) 0px 4px 8px,
+    rgba(0, 0, 0, 0.08) 0px 2px 4px;
   opacity: 0;
   transform: scale(0.95);
-  transition: opacity 150ms cubic-bezier(0.175, 0.885, 0.32, 1.275),
+  transition:
+    opacity 150ms cubic-bezier(0.175, 0.885, 0.32, 1.275),
     transform 150ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
   transition-delay: 150ms;
   line-height: 0;

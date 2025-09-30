@@ -1,6 +1,6 @@
 import { observer } from "mobx-react";
 import { UserIcon } from "outline-icons";
-import * as React from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
 import { Avatar, AvatarSize } from "~/components/Avatar";
@@ -21,17 +21,17 @@ function UserFilter(props: Props) {
   const { t } = useTranslation();
   const { users } = useStores();
 
-  const options = React.useMemo(() => {
+  const options = useMemo(() => {
     const userOptions = users.all.map((user) => ({
       key: user.id,
       label: user.name,
-      icon: <Avatar model={user} showBorder={false} size={AvatarSize.Small} />,
+      icon: <StyledAvatar model={user} size={AvatarSize.Small} />,
     }));
     return [
       {
         key: "",
         label: t("Any author"),
-        icon: <NoAuthor size={20} />,
+        icon: <UserIcon size={20} />,
       },
       ...userOptions,
     ];
@@ -43,7 +43,6 @@ function UserFilter(props: Props) {
       selectedKeys={[userId]}
       onSelect={onSelect}
       defaultLabel={t("Any author")}
-      selectedPrefix={`${t("Author")}:`}
       fetchQuery={users.fetchPage}
       fetchQueryOptions={fetchQueryOptions}
       showFilter
@@ -51,8 +50,8 @@ function UserFilter(props: Props) {
   );
 }
 
-const NoAuthor = styled(UserIcon)`
-  margin-left: -2px;
+const StyledAvatar = styled(Avatar)`
+  margin: 2px;
 `;
 
 export default observer(UserFilter);

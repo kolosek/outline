@@ -1,6 +1,7 @@
-/* eslint-disable no-irregular-whitespace */
+/* oxlint-disable no-irregular-whitespace */
 import { lighten, transparentize } from "polished";
 import styled, { DefaultTheme, css, keyframes } from "styled-components";
+import { hover } from "../../styles";
 import { EditorStyleHelper } from "../styles/EditorStyleHelper";
 import { videoStyle } from "./Video";
 
@@ -8,10 +9,12 @@ export type Props = {
   rtl: boolean;
   readOnly?: boolean;
   readOnlyWriteCheckboxes?: boolean;
+  commenting?: boolean;
   staticHTML?: boolean;
   editorStyle?: React.CSSProperties;
   grow?: boolean;
   theme: DefaultTheme;
+  userId?: string;
 };
 
 export const fadeIn = keyframes`
@@ -51,6 +54,9 @@ const mathStyle = (props: Props) => css`
     font-size: 0.95em;
     font-family: ${props.theme.fontFamilyMono};
     cursor: auto;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .math-node.empty-math .math-render::before {
@@ -113,7 +119,7 @@ const mathStyle = (props: Props) => css`
     background: ${props.theme.codeBackground};
     padding: 0.75em 1em;
     font-family: ${props.theme.fontFamilyMono};
-    font-size: 80%;
+    font-size: 90%;
   }
 
   math-block.empty-math {
@@ -123,6 +129,7 @@ const mathStyle = (props: Props) => css`
   math-block .math-src .ProseMirror {
     width: 100%;
     display: block;
+    outline: none;
   }
 
   math-block .katex-display {
@@ -247,10 +254,13 @@ const codeBlockStyle = (props: Props) => css`
 `;
 
 const findAndReplaceStyle = () => css`
-  .find-result {
+  .find-result:not(:has(.mention)),
+  .find-result .mention {
     background: rgba(255, 213, 0, 0.25);
+  }
 
-    &.current-result {
+  .find-result.current-result:not(:has(.mention)),
+  .find-result.current-result .mention {
       background: rgba(255, 213, 0, 0.75);
       animation: ${pulse} 150ms 1;
     }
@@ -286,16 +296,35 @@ width: 100%;
 .mention {
   background: ${props.theme.mentionBackground};
   border-radius: 8px;
-  padding-bottom: 2px;
   padding-top: 1px;
+  padding-bottom: 1px;
   padding-left: 4px;
-  padding-right: 4px;
+  padding-right: 6px;
   font-weight: 500;
   font-size: 0.9em;
   cursor: default;
+  text-decoration: none !important;
 
-  &:before {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: bottom;
+
+  &:${hover} {
+    cursor: default;
+    background: ${props.theme.mentionHoverBackground};
+  }
+
+  &[data-type="user"] {
+    gap: 0;
+  }
+
+  &.mention-user::before {
     content: "@";
+  }
+
+  &.mention-document::before {
+    content: "+";
   }
 }
 
@@ -307,7 +336,7 @@ width: 100%;
   box-sizing: content-box;
 }
 
-.ProseMirror {
+& > .ProseMirror {
   position: relative;
   outline: none;
   word-wrap: break-word;
@@ -315,11 +344,6 @@ width: 100%;
   white-space: break-spaces;
   padding: ${props.editorStyle?.padding ?? "initial"};
   margin: ${props.editorStyle?.margin ?? "initial"};
-
-  .ProseMirror {
-    padding: 0;
-    margin: 0;
-  }
 
   & > .ProseMirror-yjs-cursor {
     display: none;
@@ -347,6 +371,7 @@ width: 100%;
   h6 {
     margin-top: 1em;
     margin-bottom: 0.25em;
+    line-height: inherit;
     font-weight: 600;
     cursor: text;
 
@@ -356,17 +381,24 @@ width: 100%;
       margin-top: 0.25em;
     }
 
-    &:not(.placeholder):before {
-      display: none;
-      font-family: ${props.theme.fontFamilyMono};
-      color: ${props.theme.textSecondary};
-      font-size: 13px;
-      font-weight: 500;
-      line-height: 0;
-      margin-${props.rtl ? "right" : "left"}: -24px;
-      transition: opacity 150ms ease-in-out;
-      opacity: 0;
-      width: 24px;
+    &:not(.placeholder) {
+      &::before {
+        display: none;
+        font-family: ${props.theme.fontFamilyMono};
+        color: ${props.theme.textSecondary};
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 0;
+        margin-left: -24px;
+        transition: opacity 150ms ease-in-out;
+        opacity: 0;
+        width: 24px;
+      }
+
+      &:dir(rtl)::before {
+        margin-left: 0;
+        margin-right: -24px;
+      }
     }
 
     &:hover,
@@ -386,6 +418,10 @@ width: 100%;
   h5 { font-size: 15px; }
   h6 { font-size: 15px; }
 
+  .ProseMirror-yjs-selection {
+    transition: background-color 500ms ease-in-out;
+  }
+
   .ProseMirror-yjs-cursor {
     position: relative;
     margin-left: -1px;
@@ -395,7 +431,7 @@ width: 100%;
     height: 1em;
     word-break: normal;
 
-    &:after {
+    &::after {
       content: "";
       display: block;
       position: absolute;
@@ -559,7 +595,7 @@ iframe.embed {
   max-width: 100vw;
   clear: both;
   position: initial;
-  transform: translateX(calc(50% + var(--container-width) * -0.5));
+  transform: translateX(calc(50% + var(--container-width) * -0.5 + var(--full-width-transform-offset)));
 
   img {
     max-width: 100vw;
@@ -572,7 +608,7 @@ iframe.embed {
 .${EditorStyleHelper.tableFullWidth} {
   transform: translateX(calc(50% + ${
     EditorStyleHelper.padding
-  }px + var(--container-width) * -0.5));
+  }px + var(--container-width) * -0.5 + var(--full-width-transform-offset)));
 
   .${EditorStyleHelper.tableScrollable},
   table {
@@ -585,7 +621,6 @@ iframe.embed {
 }
 
 .column-resize-handle {
-  animation: ${fadeIn} 150ms ease-in-out;
   ${props.readOnly ? "display: none;" : ""}
   position: absolute;
   right: -1px;
@@ -628,15 +663,22 @@ li.ProseMirror-selectednode {
   outline: none;
 }
 
-li.ProseMirror-selectednode:after {
-  content: "";
-  position: absolute;
-  left: ${props.rtl ? "-2px" : "-32px"};
-  right: ${props.rtl ? "-32px" : "-2px"};
-  top: -2px;
-  bottom: -2px;
-  border: 2px solid ${props.theme.selected};
-  pointer-events: none;
+li.ProseMirror-selectednode {
+  &::after {
+    content: "";
+    position: absolute;
+    left: -32px;
+    right: -2px;
+    top: -2px;
+    bottom: -2px;
+    border: 2px solid ${props.theme.selected};
+    pointer-events: none;
+  }
+
+  &:dir(rtl)::after {
+    left: -2px;
+    right: -32px;
+  }
 }
 
 img.ProseMirror-separator {
@@ -651,18 +693,41 @@ img.ProseMirror-separator {
 .component-image + img.ProseMirror-separator + br.ProseMirror-trailingBreak {
   display: none;
 }
+.component-image img {
+  cursor: zoom-in;
+}
+
+.${EditorStyleHelper.imageCaption} {
+  border: 0;
+  display: block;
+  font-style: italic;
+  font-weight: normal;
+  font-size: 13px;
+  color: ${props.theme.textSecondary};
+  padding: 8px 0 4px;
+  line-height: 16px;
+  text-align: center;
+  min-height: 1em;
+  outline: none;
+  background: none;
+  resize: none;
+  user-select: text;
+  margin: 0 auto !important;
+  width: 100%;
+  max-width: 100vw;
+}
 
 .ProseMirror[contenteditable="false"] {
-  .caption {
+  .${EditorStyleHelper.imageCaption} {
     pointer-events: none;
   }
-  .caption:empty {
+  .${EditorStyleHelper.imageCaption}:empty {
     visibility: hidden;
   }
 }
 
 .heading-content {
-  &:before {
+  &::before {
     content: "​";
     display: inline;
   }
@@ -682,7 +747,10 @@ img.ProseMirror-separator {
 }
 
 .heading-name:first-child,
-.heading-name:first-child + .ProseMirror-yjs-cursor {
+// Edge case where multiplayer cursor is between start of cell and heading
+.heading-name:first-child + .ProseMirror-yjs-cursor,
+// Edge case where table grips are between start of cell and heading
+.heading-name:first-child + [role=button] + [role=button] {
   & + h1,
   & + h2,
   & + h3,
@@ -702,22 +770,22 @@ a:first-child {
   }
 }
 
-h1:not(.placeholder):before {
+h1:not(.placeholder)::before {
   content: "H1";
 }
-h2:not(.placeholder):before {
+h2:not(.placeholder)::before {
   content: "H2";
 }
-h3:not(.placeholder):before {
+h3:not(.placeholder)::before {
   content: "H3";
 }
-h4:not(.placeholder):before {
+h4:not(.placeholder)::before {
   content: "H4";
 }
-h5:not(.placeholder):before {
+h5:not(.placeholder)::before {
   content: "H5";
 }
-h6:not(.placeholder):before {
+h6:not(.placeholder)::before {
   content: "H6";
 }
 
@@ -729,7 +797,7 @@ h6:not(.placeholder):before {
   h4,
   h5,
   h6 {
-    &:not(.placeholder):before {
+    &:not(.placeholder)::before {
       opacity: 1;
     }
   }
@@ -750,7 +818,7 @@ h6:not(.placeholder):before {
   border: 0;
   margin: 0;
   padding: 0;
-  text-align: left;
+  text-align: start;
   font-weight: 500;
   font-family: ${props.theme.fontFamilyMono};
   font-size: 14px;
@@ -772,13 +840,18 @@ h6:not(.placeholder):before {
   opacity: 0;
   user-select: none;
   background: ${props.theme.background};
-  margin-${props.rtl ? "right" : "left"}: -26px;
-  flex-direction: ${props.rtl ? "row-reverse" : "row"};
+  margin-left: -26px;
+  flex-direction: row;
   display: none;
   position: relative;
   top: -2px;
   width: 26px;
   height: 24px;
+
+  &:dir(rtl) {
+    margin-left: 0;
+    margin-right: -26px;
+  }
 
   &.collapsed {
     opacity: 1;
@@ -819,7 +892,7 @@ h6 {
     .heading-actions {
       display: inline-flex;
     }
-    &:not(.placeholder):before {
+    &:not(.placeholder)::before {
       display: ${props.readOnly ? "none" : "inline-block"};
     }
   }
@@ -832,15 +905,19 @@ h6 {
 
   &.collapsed {
     svg {
-      transform: rotate(${props.rtl ? "90deg" : "-90deg"});
+      transform: rotate(-90deg);
       pointer-events: none;
     }
     transition-delay: 0.1s;
     opacity: 1;
   }
+
+  &:dir(rtl).collapsed svg {
+    transform: rotate(90deg);
+  }
 }
 
-.placeholder:before {
+.placeholder::before {
   display: block;
   opacity: 0;
   transition: opacity 150ms ease-in-out;
@@ -851,14 +928,19 @@ h6 {
 }
 
 /** Show the placeholder if focused or the first visible item nth(2) accounts for block insert trigger */
-.ProseMirror-focused .placeholder:before,
-.placeholder:nth-child(1):before,
-.placeholder:nth-child(2):before {
+.ProseMirror-focused .placeholder::before,
+.placeholder:nth-child(1)::before,
+.placeholder:nth-child(2)::before {
   opacity: 1;
 }
 
+${
+  props.commenting
+    ? `
 .${EditorStyleHelper.comment} {
-  &:not([data-resolved]) {
+  &:not([data-resolved]):not([data-draft]), &[data-draft][data-user-id="${
+    props.userId ?? ""
+  }"]  {
     border-bottom: 2px solid ${props.theme.commentMarkBackground};
     transition: background 100ms ease-in-out;
     border-radius: 2px;
@@ -868,6 +950,14 @@ h6 {
       background: ${props.theme.commentMarkBackground};
     }
   }
+}
+`
+    : `
+.${EditorStyleHelper.comment} {
+  background: transparent !important;
+  border: none !important;
+}
+`
 }
 
 .notice-block {
@@ -899,12 +989,19 @@ h6 {
   min-width: 0;
 }
 
-.notice-block .icon {
-  width: 24px;
-  height: 24px;
-  align-self: flex-start;
-  margin-${props.rtl ? "left" : "right"}: 4px;
-  color: ${props.theme.noticeInfoBackground};
+.notice-block {
+  .icon {
+    width: 24px;
+    height: 24px;
+    align-self: flex-start;
+    margin-right: 4px;
+    color: ${props.theme.noticeInfoBackground};
+  }
+
+  &:dir(rtl) .icon {
+    margin-right: 0;
+    margin-left: 4px;
+  }
 }
 
 .notice-block.tip {
@@ -955,16 +1052,21 @@ blockquote {
   overflow: hidden;
   position: relative;
 
-  &:before {
+  &::before {
     content: "";
     display: inline-block;
     width: 2px;
     border-radius: 1px;
     position: absolute;
-    margin-${props.rtl ? "right" : "left"}: -1.5em;
+    margin-left: -1.5em;
     top: 0;
     bottom: 0;
     background: ${props.theme.quote};
+  }
+
+  &:dir(rtl)::before {
+    margin-left: 0;
+    margin-right: -1.5em;
   }
 }
 
@@ -1006,6 +1108,10 @@ p a {
   }
 }
 
+.heading-content a {
+  font-weight: inherit;
+}
+
 a {
   color: ${props.theme.link};
   cursor: pointer;
@@ -1023,8 +1129,18 @@ a:hover {
 
 ul,
 ol {
-  margin: ${props.rtl ? "0 -26px 0 0.1em" : "0 0.1em 0 -26px"};
-  padding: ${props.rtl ? "0 48px 0 0" : "0 0 0 48px"};
+  margin: 0 0.1em 0 ${props.staticHTML ? "0" : "-26px"};
+  padding: 0 0 0 48px;
+
+  &:has(p:dir(rtl)) {
+    direction: rtl;
+  }
+
+  &:has(p:dir(rtl)),
+  &:dir(rtl) {
+    margin: 0 ${props.staticHTML ? "0" : "-26px"} 0 0.1em;
+    padding: 0 48px 0 0;
+  }
 }
 
 ol ol {
@@ -1035,16 +1151,11 @@ ol ol ol {
   list-style: lower-roman;
 }
 
-ul.checkbox_list {
-  padding: 0;
-  margin-left: ${props.rtl ? "0" : "-24px"};
-  margin-right: ${props.rtl ? "-24px" : "0"};
-}
-
 ul li,
 ol li {
   position: relative;
   white-space: initial;
+  text-align: start;
 
   p {
     white-space: pre-wrap;
@@ -1055,29 +1166,53 @@ ol li {
   }
 }
 
-ul.checkbox_list > li {
-  display: flex;
-  list-style: none;
-  padding-${props.rtl ? "right" : "left"}: 24px;
+ul.checkbox_list {
+  padding: 0;
+  margin-left: -24px;
+  margin-right: 0;
+
+  & > li {
+    display: flex;
+    list-style: none;
+    padding-left: 24px;
+    padding-right: 0;
+  }
+
+  &:has(p:dir(rtl)) {
+    margin-left: 0;
+    margin-right: -24px;
+
+    & > li {
+      padding-left: 0;
+      padding-right: 24px;
+    }
+  }
 }
 
 ul.checkbox_list > li.checked > div > p {
   color: ${props.theme.textTertiary};
 }
 
-ul li::before,
-ol li::before {
-  background: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3QgeD0iOCIgeT0iNyIgd2lkdGg9IjMiIGhlaWdodD0iMiIgcng9IjEiIGZpbGw9IiM0RTVDNkUiLz4KPHJlY3QgeD0iOCIgeT0iMTEiIHdpZHRoPSIzIiBoZWlnaHQ9IjIiIHJ4PSIxIiBmaWxsPSIjNEU1QzZFIi8+CjxyZWN0IHg9IjgiIHk9IjE1IiB3aWR0aD0iMyIgaGVpZ2h0PSIyIiByeD0iMSIgZmlsbD0iIzRFNUM2RSIvPgo8cmVjdCB4PSIxMyIgeT0iNyIgd2lkdGg9IjMiIGhlaWdodD0iMiIgcng9IjEiIGZpbGw9IiM0RTVDNkUiLz4KPHJlY3QgeD0iMTMiIHk9IjExIiB3aWR0aD0iMyIgaGVpZ2h0PSIyIiByeD0iMSIgZmlsbD0iIzRFNUM2RSIvPgo8cmVjdCB4PSIxMyIgeT0iMTUiIHdpZHRoPSIzIiBoZWlnaHQ9IjIiIHJ4PSIxIiBmaWxsPSIjNEU1QzZFIi8+Cjwvc3ZnPgo=") no-repeat;
-  background-position: 0 2px;
-  content: "";
-  display: ${props.readOnly ? "none" : "inline-block"};
-  cursor: grab;
-  width: 24px;
-  height: 24px;
-  position: absolute;
-  ${props.rtl ? "right" : "left"}: -40px;
-  opacity: 0;
-  transition: opacity 200ms ease-in-out;
+ul li,
+ol li {
+  &::before {
+    background: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3QgeD0iOCIgeT0iNyIgd2lkdGg9IjMiIGhlaWdodD0iMiIgcng9IjEiIGZpbGw9IiM0RTVDNkUiLz4KPHJlY3QgeD0iOCIgeT0iMTEiIHdpZHRoPSIzIiBoZWlnaHQ9IjIiIHJ4PSIxIiBmaWxsPSIjNEU1QzZFIi8+CjxyZWN0IHg9IjgiIHk9IjE1IiB3aWR0aD0iMyIgaGVpZ2h0PSIyIiByeD0iMSIgZmlsbD0iIzRFNUM2RSIvPgo8cmVjdCB4PSIxMyIgeT0iNyIgd2lkdGg9IjMiIGhlaWdodD0iMiIgcng9IjEiIGZpbGw9IiM0RTVDNkUiLz4KPHJlY3QgeD0iMTMiIHk9IjExIiB3aWR0aD0iMyIgaGVpZ2h0PSIyIiByeD0iMSIgZmlsbD0iIzRFNUM2RSIvPgo8cmVjdCB4PSIxMyIgeT0iMTUiIHdpZHRoPSIzIiBoZWlnaHQ9IjIiIHJ4PSIxIiBmaWxsPSIjNEU1QzZFIi8+Cjwvc3ZnPgo=") no-repeat;
+    background-position: 0 2px;
+    content: "";
+    display: ${props.readOnly ? "none" : "inline-block"};
+    cursor: grab;
+    width: 24px;
+    height: 24px;
+    position: absolute;
+    left: -40px;
+    opacity: 0;
+    transition: opacity 200ms ease-in-out;
+  }
+
+  &:dir(rtl)::before {
+    left: auto;
+    right: -40px;
+  }
 }
 
 ul li[draggable=true]::before,
@@ -1085,9 +1220,15 @@ ol li[draggable=true]::before {
   cursor: grabbing;
 }
 
-ul > li.counter-2::before,
-ol li.counter-2::before {
-  ${props.rtl ? "right" : "left"}: -50px;
+ul > li.counter-2,
+ol li.counter-2 {
+  &::before {
+    left: -50px;
+  }
+  &:dir(rtl)::before {
+    left: auto;
+    right: -50px;
+  }
 }
 
 ul > li.hovering::before,
@@ -1100,42 +1241,57 @@ ol li.ProseMirror-selectednode::after {
   display: none;
 }
 
-ul.checkbox_list > li::before {
-  ${props.rtl ? "right" : "left"}: 0;
-}
-
-ul.checkbox_list li .checkbox {
-  display: inline-block;
-  cursor: var(--pointer);
-  pointer-events: ${
-    props.readOnly && !props.readOnlyWriteCheckboxes ? "none" : "initial"
-  };
-  opacity: ${props.readOnly && !props.readOnlyWriteCheckboxes ? 0.75 : 1};
-  margin: ${props.rtl ? "0 0 0 0.5em" : "0 0.5em 0 0"};
-  width: 14px;
-  height: 14px;
-  position: relative;
-  top: 1px;
-  transition: transform 100ms ease-in-out;
-  opacity: .8;
-
-  background-image: ${`url("data:image/svg+xml,%3Csvg width='14' height='14' viewBox='0 0 14 14' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M3 0C1.34315 0 0 1.34315 0 3V11C0 12.6569 1.34315 14 3 14H11C12.6569 14 14 12.6569 14 11V3C14 1.34315 12.6569 0 11 0H3ZM3 2C2.44772 2 2 2.44772 2 3V11C2 11.5523 2.44772 12 3 12H11C11.5523 12 12 11.5523 12 11V3C12 2.44772 11.5523 2 11 2H3Z' fill='${props.theme.text.replace(
-    "#",
-    "%23"
-  )}' /%3E%3C/svg%3E%0A");`}
-
-  &[aria-checked=true] {
-    opacity: 1;
-    background-image: ${`url(
-        "data:image/svg+xml,%3Csvg width='14' height='14' viewBox='0 0 14 14' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M3 0C1.34315 0 0 1.34315 0 3V11C0 12.6569 1.34315 14 3 14H11C12.6569 14 14 12.6569 14 11V3C14 1.34315 12.6569 0 11 0H3ZM4.26825 5.85982L5.95873 7.88839L9.70003 2.9C10.0314 2.45817 10.6582 2.36863 11.1 2.7C11.5419 3.03137 11.6314 3.65817 11.3 4.1L6.80002 10.1C6.41275 10.6164 5.64501 10.636 5.2318 10.1402L2.7318 7.14018C2.37824 6.71591 2.43556 6.08534 2.85984 5.73178C3.28412 5.37821 3.91468 5.43554 4.26825 5.85982Z' fill='${props.theme.accent.replace(
-          "#",
-          "%23"
-        )}' /%3E%3C/svg%3E%0A"
-      )`};
+ul.checkbox_list > li {
+  &::before {
+    left: 0;
   }
 
-  &:active {
-    transform: scale(0.9);
+  &:dir(rtl)::before {
+    left: auto;
+    right: 0;
+  }
+}
+
+ul.checkbox_list {
+  .checkbox {
+    display: inline-block;
+    cursor: var(--pointer);
+    pointer-events: ${
+      props.readOnly && !props.readOnlyWriteCheckboxes ? "none" : "initial"
+    };
+    opacity: ${props.readOnly && !props.readOnlyWriteCheckboxes ? 0.75 : 1};
+    width: 14px;
+    height: 14px;
+    position: relative;
+    top: 1px;
+    transition: transform 100ms ease-in-out;
+    opacity: .8;
+    margin: 0 0.5em 0 0;
+
+    background-image: ${`url("data:image/svg+xml,%3Csvg width='14' height='14' viewBox='0 0 14 14' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M3 0C1.34315 0 0 1.34315 0 3V11C0 12.6569 1.34315 14 3 14H11C12.6569 14 14 12.6569 14 11V3C14 1.34315 12.6569 0 11 0H3ZM3 2C2.44772 2 2 2.44772 2 3V11C2 11.5523 2.44772 12 3 12H11C11.5523 12 12 11.5523 12 11V3C12 2.44772 11.5523 2 11 2H3Z' fill='${props.theme.text.replace(
+      "#",
+      "%23"
+    )}' /%3E%3C/svg%3E%0A");`}
+
+    &[aria-checked=true] {
+        opacity: 1;
+        background-image: ${`url(
+            "data:image/svg+xml,%3Csvg width='14' height='14' viewBox='0 0 14 14' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M3 0C1.34315 0 0 1.34315 0 3V11C0 12.6569 1.34315 14 3 14H11C12.6569 14 14 12.6569 14 11V3C14 1.34315 12.6569 0 11 0H3ZM4.26825 5.85982L5.95873 7.88839L9.70003 2.9C10.0314 2.45817 10.6582 2.36863 11.1 2.7C11.5419 3.03137 11.6314 3.65817 11.3 4.1L6.80002 10.1C6.41275 10.6164 5.64501 10.636 5.2318 10.1402L2.7318 7.14018C2.37824 6.71591 2.43556 6.08534 2.85984 5.73178C3.28412 5.37821 3.91468 5.43554 4.26825 5.85982Z' fill='${props.theme.accent.replace(
+              "#",
+              "%23"
+            )}' /%3E%3C/svg%3E%0A"
+        )`};
+    }
+
+    &:active {
+      transform: scale(0.9);
+    }
+  }
+
+  &:has(p:dir(rtl)) {
+    .checkbox {
+      margin: 0 0 0 0.5em;
+    }
   }
 }
 
@@ -1150,7 +1306,7 @@ hr {
   border: 0;
 }
 
-hr:before {
+hr::before {
   content: "";
   display: block;
   position: absolute;
@@ -1164,23 +1320,31 @@ hr.page-break {
   page-break-after: always;
 }
 
-hr.page-break:before {
+hr.page-break::before {
   border-top: 1px dashed ${props.theme.horizontalRule};
 }
 
 .math-inline .math-src .ProseMirror,
 code {
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+
   border-radius: 4px;
   border: 1px solid ${props.theme.codeBorder};
   background: ${props.theme.codeBackground};
   padding: 3px 4px;
   color: ${props.theme.codeString};
   font-family: ${props.theme.fontFamilyMono};
-  font-size: 80%;
+  font-size: 90%;
+
+  .${EditorStyleHelper.codeWord} {
+    white-space: nowrap;
+  }
 }
 
 mark {
   border-radius: 1px;
+  padding: 2px 0;
   color: ${props.theme.text};
 
   a {
@@ -1201,6 +1365,13 @@ mark {
   position: relative;
 }
 
+.code-block[data-language=none],
+.code-block[data-language=markdown] {
+  pre code {
+    color: ${props.theme.text};
+  }
+}
+
 .code-block[data-language=mermaidjs] {
   margin: 0.75em 0;
 
@@ -1218,20 +1389,19 @@ mark {
 
   // Hide code without display none so toolbar can still be positioned against it
   &:not(.code-active) {
-    height: ${props.staticHTML ? "auto" : "0"};
+    height: ${props.staticHTML || props.readOnly ? "auto" : "0"};
     margin: -0.75em 0;
     overflow: hidden;
 
     // Allows the margin to collapse correctly by moving div out of the flow
-    position: ${props.staticHTML ? "relative" : "absolute"};
+    position: ${props.staticHTML || props.readOnly ? "relative" : "absolute"};
   }
 }
 
-/* Hide code without display none so toolbar can still be positioned against it */
 .ProseMirror[contenteditable="false"] .code-block[data-language=mermaidjs] {
-  height: ${props.staticHTML ? "auto" : "0"};
-  margin: -0.5em 0;
-  overflow: hidden;
+    height: 0;
+    overflow: hidden;
+    margin: -0.5em 0 0 0;
 }
 
 .code-block.with-line-numbers {
@@ -1239,7 +1409,7 @@ mark {
     padding-left: calc(var(--line-number-gutter-width, 0) * 1em + 1.5em);
   }
 
-  &:after {
+  &::after {
     content: attr(data-line-numbers);
     position: absolute;
     padding-left: 0.5em;
@@ -1348,7 +1518,7 @@ table {
     border: 1px solid ${props.theme.divider};
     position: relative;
     padding: 4px 8px;
-    text-align: ${props.rtl ? "right" : "left"};
+    text-align: start;
     min-width: 100px;
     font-weight: normal;
   }
@@ -1511,7 +1681,7 @@ table {
       cursor: var(--pointer);
       position: absolute;
       top: -16px;
-      ${props.rtl ? "right" : "left"}: 0;
+      left: 0;
       width: 100%;
       height: 12px;
       background: ${props.theme.divider};
@@ -1522,12 +1692,12 @@ table {
       background: ${props.theme.text};
     }
     &.first::after {
-      border-top-${props.rtl ? "right" : "left"}-radius: 3px;
-      border-bottom-${props.rtl ? "right" : "left"}-radius: 3px;
+      border-top-left-radius: 3px;
+      border-bottom-left-radius: 3px;
     }
     &.last::after {
-      border-top-${props.rtl ? "left" : "right"}-radius: 3px;
-      border-bottom-${props.rtl ? "left" : "right"}-radius: 3px;
+      border-top-right-radius: 3px;
+      border-bottom-right-radius: 3px;
     }
     &.selected::after {
       background: ${props.theme.tableSelected};
@@ -1539,7 +1709,7 @@ table {
       content: "";
       cursor: var(--pointer);
       position: absolute;
-      ${props.rtl ? "right" : "left"}: -16px;
+      left: -16px;
       top: 0;
       height: 100%;
       width: 12px;
@@ -1575,7 +1745,7 @@ table {
       border: 2px solid ${props.theme.background};
       position: absolute;
       top: -18px;
-      ${props.rtl ? "right" : "left"}: -18px;
+      left: -18px;
       display: ${props.readOnly ? "none" : "block"};
       z-index: 10;
     }
@@ -1608,8 +1778,8 @@ table {
 
   &:hover {
     scrollbar-color: ${props.theme.scrollbarThumb} ${
-  props.theme.scrollbarBackground
-};
+      props.theme.scrollbarBackground
+    };
   }
 
   & ::-webkit-scrollbar {
@@ -1639,7 +1809,7 @@ table {
   position: absolute;
   top: 1px;
   bottom: 0;
-  ${props.rtl ? "right" : "left"}: -1em;
+  left: -1em;
   width: 32px;
   z-index: 20;
   transition: box-shadow 250ms ease-in-out;
@@ -1687,7 +1857,7 @@ table {
   &:focus {
     cursor: var(--pointer);
     color: ${props.theme.text};
-    background: ${props.theme.secondaryBackground};
+    background: ${props.theme.backgroundSecondary};
   }
 }
 
@@ -1705,7 +1875,7 @@ table {
   position: absolute;
 }
 
-.ProseMirror-gapcursor:after {
+.ProseMirror-gapcursor::after {
   content: "";
   display: block;
   position: absolute;
@@ -1753,16 +1923,16 @@ del[data-operation-index] {
 }
 
 @media print {
-  .placeholder:before,
+  .placeholder::before,
   .block-menu-trigger,
   .heading-actions,
   button.show-source-button,
-  h1:not(.placeholder):before,
-  h2:not(.placeholder):before,
-  h3:not(.placeholder):before,
-  h4:not(.placeholder):before,
-  h5:not(.placeholder):before,
-  h6:not(.placeholder):before {
+  h1:not(.placeholder)::before,
+  h2:not(.placeholder)::before,
+  h3:not(.placeholder)::before,
+  h4:not(.placeholder)::before,
+  h5:not(.placeholder)::before,
+  h6:not(.placeholder)::before {
     display: none;
   }
 

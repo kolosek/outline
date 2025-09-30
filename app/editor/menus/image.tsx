@@ -8,7 +8,6 @@ import {
   AlignFullWidthIcon,
 } from "outline-icons";
 import { EditorState } from "prosemirror-state";
-import * as React from "react";
 import { isNodeActive } from "@shared/editor/queries/isNodeActive";
 import { MenuItem } from "@shared/editor/types";
 import { Dictionary } from "~/hooks/useDictionary";
@@ -33,14 +32,12 @@ export default function imageMenuItems(
       name: "alignLeft",
       tooltip: dictionary.alignLeft,
       icon: <AlignImageLeftIcon />,
-      visible: true,
       active: isLeftAligned,
     },
     {
       name: "alignCenter",
       tooltip: dictionary.alignCenter,
       icon: <AlignImageCenterIcon />,
-      visible: true,
       active: (state) =>
         isNodeActive(schema.nodes.image)(state) &&
         !isLeftAligned(state) &&
@@ -51,19 +48,25 @@ export default function imageMenuItems(
       name: "alignRight",
       tooltip: dictionary.alignRight,
       icon: <AlignImageRightIcon />,
-      visible: true,
       active: isRightAligned,
     },
     {
       name: "alignFullWidth",
       tooltip: dictionary.alignFullWidth,
       icon: <AlignFullWidthIcon />,
-      visible: true,
       active: isFullWidthAligned,
     },
     {
       name: "separator",
-      visible: true,
+    },
+    {
+      name: "dimensions",
+      tooltip: dictionary.dimensions,
+      visible: !isFullWidthAligned(state),
+      skipIcon: true,
+    },
+    {
+      name: "separator",
     },
     {
       name: "downloadImage",
@@ -75,13 +78,11 @@ export default function imageMenuItems(
       name: "replaceImage",
       tooltip: dictionary.replaceImage,
       icon: <ReplaceIcon />,
-      visible: true,
     },
     {
       name: "deleteImage",
       tooltip: dictionary.deleteImage,
       icon: <TrashIcon />,
-      visible: true,
     },
   ];
 }

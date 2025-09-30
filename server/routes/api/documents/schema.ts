@@ -5,7 +5,7 @@ import { z } from "zod";
 import { DocumentPermission, StatusFilter } from "@shared/types";
 import { UrlHelper } from "@shared/utils/UrlHelper";
 import { BaseSchema } from "@server/routes/api/schema";
-import { zodIconType } from "@server/utils/zod";
+import { zodIconType, zodIdType } from "@server/utils/zod";
 import { ValidateColor } from "@server/validation";
 
 const DocumentsSortParamsSchema = z.object({
@@ -36,14 +36,35 @@ const DateFilterSchema = z.object({
     .optional(),
 });
 
-const SearchQuerySchema = z.object({
-  /** Query for search */
-  query: z.string().refine((v) => v.trim() !== ""),
+const BaseSearchSchema = DateFilterSchema.extend({
+  /** Filter results for team based on the collection */
+  collectionId: z.string().uuid().optional(),
+
+  /** Filter results based on user */
+  userId: z.string().uuid().optional(),
+
+  /** Filter results based on content within a document and it's children */
+  documentId: z.string().uuid().optional(),
+
+  /** Document statuses to include in results */
+  statusFilter: z.nativeEnum(StatusFilter).array().optional(),
+
+  /** Filter results for the team derived from shareId */
+  shareId: z
+    .string()
+    .refine((val) => isUUID(val) || UrlHelper.SHARE_URL_SLUG_REGEX.test(val))
+    .optional(),
+
+  /** Min words to be shown in the results snippets */
+  snippetMinWords: z.number().default(20),
+
+  /** Max words to be accomodated in the results snippets */
+  snippetMaxWords: z.number().default(30),
 });
 
 const BaseIdSchema = z.object({
   /** Id of the document to be updated */
-  id: z.string(),
+  id: zodIdType(),
 });
 
 export const DocumentsListSchema = BaseSchema.extend({
@@ -68,6 +89,9 @@ export const DocumentsListSchema = BaseSchema.extend({
 
     /** Boolean which denotes whether the document is a template */
     template: z.boolean().optional(),
+
+    /** Document statuses to include in results */
+    statusFilter: z.nativeEnum(StatusFilter).array().optional(),
   }),
   // Maintains backwards compatibility
 }).transform((req) => {
@@ -113,9 +137,7 @@ export type DocumentsDraftsReq = z.infer<typeof DocumentsDraftsSchema>;
 
 export const DocumentsInfoSchema = BaseSchema.extend({
   body: z.object({
-    /** Id of the document to be retrieved */
-    id: z.string().optional(),
-
+    id: zodIdType().optional(),
     /** Share Id, if available */
     shareId: z
       .string()
@@ -150,34 +172,24 @@ export const DocumentsRestoreSchema = BaseSchema.extend({
 export type DocumentsRestoreReq = z.infer<typeof DocumentsRestoreSchema>;
 
 export const DocumentsSearchSchema = BaseSchema.extend({
-  body: SearchQuerySchema.merge(DateFilterSchema).extend({
-    /** Filter results for team based on the collection */
-    collectionId: z.string().uuid().optional(),
-
-    /** Filter results based on user */
-    userId: z.string().uuid().optional(),
-
-    /** Filter results based on content within a document and it's children */
-    documentId: z.string().uuid().optional(),
-
-    /** Document statuses to include in results */
-    statusFilter: z.nativeEnum(StatusFilter).array().optional(),
-
-    /** Filter results for the team derived from shareId */
-    shareId: z
-      .string()
-      .refine((val) => isUUID(val) || UrlHelper.SHARE_URL_SLUG_REGEX.test(val))
-      .optional(),
-
-    /** Min words to be shown in the results snippets */
-    snippetMinWords: z.number().default(20),
-
-    /** Max words to be accomodated in the results snippets */
-    snippetMaxWords: z.number().default(30),
+  body: BaseSearchSchema.extend({
+    /** Query for search */
+    query: z.string().optional(),
   }),
 });
 
 export type DocumentsSearchReq = z.infer<typeof DocumentsSearchSchema>;
+
+export const DocumentsSearchTitlesSchema = BaseSchema.extend({
+  body: BaseSearchSchema.extend({
+    /** Query for search */
+    query: z.string().refine((val) => val.trim() !== ""),
+  }),
+});
+
+export type DocumentsSearchTitlesReq = z.infer<
+  typeof DocumentsSearchTitlesSchema
+>;
 
 export const DocumentsDuplicateSchema = BaseSchema.extend({
   body: BaseIdSchema.extend({
@@ -288,6 +300,9 @@ export type DocumentsDeleteReq = z.infer<typeof DocumentsDeleteSchema>;
 
 export const DocumentsUnpublishSchema = BaseSchema.extend({
   body: BaseIdSchema.extend({
+    /** Whether to detach the document from the collection */
+    detach: z.boolean().default(false),
+
     /** @deprecated Version of the API to be used, remove in a few releases */
     apiVersion: z.number().optional(),
   }),
@@ -296,16 +311,23 @@ export const DocumentsUnpublishSchema = BaseSchema.extend({
 export type DocumentsUnpublishReq = z.infer<typeof DocumentsUnpublishSchema>;
 
 export const DocumentsImportSchema = BaseSchema.extend({
-  body: z.object({
-    /** Whether to publish the imported docs. String as this is always multipart/form-data */
-    publish: z.preprocess((val) => val === "true", z.boolean()).optional(),
+  body: z
+    .object({
+      /** Whether to publish the imported docs. String as this is always multipart/form-data */
+      publish: z.preprocess((val) => val === "true", z.boolean()).optional(),
 
-    /** Import docs to this collection */
-    collectionId: z.string().uuid(),
+      /** Import docs to this collection */
+      collectionId: z.string().uuid().nullish(),
 
-    /** Import under this parent doc */
-    parentDocumentId: z.string().uuid().nullish(),
-  }),
+      /** Import under this parent doc */
+      parentDocumentId: z.string().uuid().nullish(),
+    })
+    .refine(
+      (req) => !(isEmpty(req.collectionId) && isEmpty(req.parentDocumentId)),
+      {
+        message: "one of collectionId or parentDocumentId is required",
+      }
+    ),
   file: z.custom<formidable.File>(),
 });
 
@@ -313,11 +335,14 @@ export type DocumentsImportReq = z.infer<typeof DocumentsImportSchema>;
 
 export const DocumentsCreateSchema = BaseSchema.extend({
   body: z.object({
+    /** Id of the document to be created */
+    id: zodIdType().optional(),
+
     /** Document title */
-    title: z.string().default(""),
+    title: z.string().optional(),
 
     /** Document text */
-    text: z.string().default(""),
+    text: z.string().optional(),
 
     /** Icon displayed alongside doc title */
     icon: zodIconType().optional(),
@@ -375,10 +400,14 @@ export const DocumentsUsersSchema = BaseSchema.extend({
 
 export type DocumentsUsersReq = z.infer<typeof DocumentsUsersSchema>;
 
+export const DocumentsChildrenSchema = BaseSchema.extend({
+  body: BaseIdSchema,
+});
+
+export type DocumentsChildrenReq = z.infer<typeof DocumentsChildrenSchema>;
+
 export const DocumentsAddUserSchema = BaseSchema.extend({
-  body: z.object({
-    /** Id of the document to which the user is supposed to be added */
-    id: z.string().uuid(),
+  body: BaseIdSchema.extend({
     /** Id of the user who is to be added */
     userId: z.string().uuid(),
     /** Permission to be granted to the added user */
@@ -389,9 +418,7 @@ export const DocumentsAddUserSchema = BaseSchema.extend({
 export type DocumentsAddUserReq = z.infer<typeof DocumentsAddUserSchema>;
 
 export const DocumentsRemoveUserSchema = BaseSchema.extend({
-  body: z.object({
-    /** Id of the document from which to remove the user */
-    id: z.string().uuid(),
+  body: BaseIdSchema.extend({
     /** Id of the user who is to be removed */
     userId: z.string().uuid(),
   }),
@@ -438,3 +465,11 @@ export const DocumentsMembershipsSchema = BaseSchema.extend({
 export type DocumentsMembershipsReq = z.infer<
   typeof DocumentsMembershipsSchema
 >;
+
+export const DocumentsSitemapSchema = BaseSchema.extend({
+  query: z.object({
+    shareId: z.string(),
+  }),
+});
+
+export type DocumentsSitemapReq = z.infer<typeof DocumentsSitemapSchema>;

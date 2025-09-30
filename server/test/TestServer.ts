@@ -1,7 +1,7 @@
 import http from "http";
 import { AddressInfo } from "net";
 import Koa from "koa";
-// eslint-disable-next-line no-restricted-imports
+// oxlint-disable-next-line no-restricted-imports
 import nodeFetch from "node-fetch";
 
 class TestServer {
@@ -47,9 +47,7 @@ class TestServer {
 
   close() {
     this.listener = null;
-    return new Promise<void>((resolve, reject) => {
-      this.server.close((err) => (err ? reject(err) : resolve()));
-    });
+    this.server.closeAllConnections();
   }
 
   delete(path: string, options?: any) {

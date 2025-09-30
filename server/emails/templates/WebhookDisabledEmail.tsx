@@ -1,5 +1,5 @@
 import * as React from "react";
-import BaseEmail, { EmailProps } from "./BaseEmail";
+import BaseEmail, { EmailMessageCategory, EmailProps } from "./BaseEmail";
 import Body from "./components/Body";
 import Button from "./components/Button";
 import EmailTemplate from "./components/EmailLayout";
@@ -18,6 +18,10 @@ type Props = EmailProps & {
  * due to repeated failure.
  */
 export default class WebhookDisabledEmail extends BaseEmail<Props> {
+  protected get category() {
+    return EmailMessageCategory.Notification;
+  }
+
   protected subject() {
     return `Warning: Webhook disabled`;
   }
@@ -28,8 +32,8 @@ export default class WebhookDisabledEmail extends BaseEmail<Props> {
 
   protected renderAsText({ webhookName, teamUrl }: Props): string {
     return `
-Your webhook (${webhookName}) has been automatically disabled as the last 25 
-delivery attempts have failed. You can re-enable by editing the webhook.
+Your webhook (${webhookName}) has been automatically disabled due to a high failure rate
+in recent delivery attempts. You can re-enable by editing the webhook.
 
 Webhook settings: ${teamUrl}/settings/webhooks
 `;
@@ -46,9 +50,9 @@ Webhook settings: ${teamUrl}/settings/webhooks
         <Body>
           <Heading>Webhook disabled</Heading>
           <p>
-            Your webhook ({webhookName}) has been automatically disabled as the
-            last 25 delivery attempts have failed. You can re-enable by editing
-            the webhook.
+            Your webhook ({webhookName}) has been automatically disabled due to
+            a high failure rate in recent delivery attempts. You can re-enable
+            by editing the webhook.
           </p>
           <EmptySpace height={10} />
           <p>

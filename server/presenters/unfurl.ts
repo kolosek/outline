@@ -4,12 +4,14 @@ import { UnfurlResourceType, UnfurlResponse } from "@shared/types";
 import { dateLocale } from "@shared/utils/date";
 import { Document, User, View } from "@server/models";
 import { opts } from "@server/utils/i18n";
-import { GitHubUtils } from "plugins/github/shared/GitHubUtils";
 
-async function presentUnfurl(data: Record<string, any>) {
+async function presentUnfurl(
+  data: Record<string, any>,
+  options?: { includeEmail: boolean }
+) {
   switch (data.type) {
     case UnfurlResourceType.Mention:
-      return presentMention(data);
+      return presentMention(data, options);
     case UnfurlResourceType.Document:
       return presentDocument(data);
     case UnfurlResourceType.PR:
@@ -32,7 +34,8 @@ const presentOEmbed = (
 });
 
 const presentMention = async (
-  data: Record<string, any>
+  data: Record<string, any>,
+  options?: { includeEmail: boolean }
 ): Promise<UnfurlResponse[UnfurlResourceType.Mention]> => {
   const user: User = data.user;
   const document: Document = data.document;
@@ -43,6 +46,7 @@ const presentMention = async (
   return {
     type: UnfurlResourceType.Mention,
     name: user.name,
+    email: options && options.includeEmail ? user.email : null,
     avatarUrl: user.avatarUrl,
     color: user.color,
     lastActive: `${lastOnlineInfo} • ${lastViewedInfo}`,
@@ -66,47 +70,13 @@ const presentDocument = (
 
 const presentPR = (
   data: Record<string, any>
-): UnfurlResponse[UnfurlResourceType.PR] => ({
-  url: data.html_url,
-  type: UnfurlResourceType.PR,
-  id: `#${data.number}`,
-  title: data.title,
-  description: data.body,
-  author: {
-    name: data.user.login,
-    avatarUrl: data.user.avatar_url,
-  },
-  state: {
-    name: data.merged ? "merged" : data.state,
-    color: GitHubUtils.getColorForStatus(data.merged ? "merged" : data.state),
-  },
-  createdAt: data.created_at,
-});
+): UnfurlResponse[UnfurlResourceType.PR] =>
+  data as UnfurlResponse[UnfurlResourceType.PR]; // this would have been transformed by the unfurl plugin.
 
 const presentIssue = (
   data: Record<string, any>
-): UnfurlResponse[UnfurlResourceType.Issue] => ({
-  url: data.html_url,
-  type: UnfurlResourceType.Issue,
-  id: `#${data.number}`,
-  title: data.title,
-  description: data.body_text,
-  author: {
-    name: data.user.login,
-    avatarUrl: data.user.avatar_url,
-  },
-  labels: data.labels.map((label: { name: string; color: string }) => ({
-    name: label.name,
-    color: `#${label.color}`,
-  })),
-  state: {
-    name: data.state,
-    color: GitHubUtils.getColorForStatus(
-      data.state === "closed" ? "done" : data.state
-    ),
-  },
-  createdAt: data.created_at,
-});
+): UnfurlResponse[UnfurlResourceType.Issue] =>
+  data as UnfurlResponse[UnfurlResourceType.Issue]; // this would have been transformed by the unfurl plugin.
 
 const presentLastOnlineInfoFor = (user: User) => {
   const locale = dateLocale(user.language);

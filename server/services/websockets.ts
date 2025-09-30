@@ -4,6 +4,7 @@ import cookie from "cookie";
 import Koa from "koa";
 import IO from "socket.io";
 import { createAdapter } from "socket.io-redis";
+import env from "@server/env";
 import { AuthenticationError } from "@server/errors";
 import Logger from "@server/logging/Logger";
 import Metrics from "@server/logging/Metrics";
@@ -35,8 +36,11 @@ export default function init(
     path,
     serveClient: false,
     cookie: false,
+    pingInterval: 15000,
+    pingTimeout: 30000,
     cors: {
-      origin: "*",
+      // Included for completeness, though CORS does not apply to websocket transport.
+      origin: env.isCloudHosted ? "*" : env.URL,
       methods: ["GET", "POST"],
     },
   });
@@ -58,6 +62,16 @@ export default function init(
     "upgrade",
     function (req: IncomingMessage, socket: Duplex, head: Buffer) {
       if (req.url?.startsWith(path) && ioHandleUpgrade) {
+        // For on-premise deployments, ensure the websocket origin matches the deployed URL.
+        // In cloud-hosted we support any origin for custom domains.
+        if (
+          !env.isCloudHosted &&
+          (!req.headers.origin || !env.URL.startsWith(req.headers.origin))
+        ) {
+          socket.end(`HTTP/1.1 400 Bad Request\r\n`);
+          return;
+        }
+
         ioHandleUpgrade(req, socket, head);
         return;
       }
@@ -177,9 +191,9 @@ async function authenticated(io: IO.Server, socket: SocketWithAuth) {
     // user is joining a collection channel, because their permissions have
     // changed, granting them access.
     if (event.collectionId) {
-      const collection = await Collection.scope({
-        method: ["withMembership", user.id],
-      }).findByPk(event.collectionId);
+      const collection = await Collection.findByPk(event.collectionId, {
+        userId: user.id,
+      });
 
       if (can(user, "read", collection)) {
         await socket.join(`collection-${event.collectionId}`);

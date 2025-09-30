@@ -2,12 +2,12 @@ import includes from "lodash/includes";
 import { observer } from "mobx-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
+import Icon from "@shared/components/Icon";
 import { NavigationNode } from "@shared/types";
 import Collection from "~/models/Collection";
 import Document from "~/models/Document";
-import Icon from "~/components/Icon";
 import useStores from "~/hooks/useStores";
-import { sharedDocumentPath } from "~/utils/routeHelpers";
+import { sharedModelPath } from "~/utils/routeHelpers";
 import { descendants } from "~/utils/tree";
 import SidebarLink from "./SidebarLink";
 
@@ -16,6 +16,7 @@ type Props = {
   collection?: Collection;
   activeDocumentId?: string;
   activeDocument?: Document;
+  prefetchDocument?: (documentId: string) => Promise<Document | void>;
   isDraft?: boolean;
   depth: number;
   index: number;
@@ -29,6 +30,7 @@ function DocumentLink(
     collection,
     activeDocument,
     activeDocumentId,
+    prefetchDocument,
     isDraft,
     depth,
     shareId,
@@ -97,6 +99,10 @@ function DocumentLink(
     node,
   ]);
 
+  const handlePrefetch = React.useCallback(() => {
+    void prefetchDocument?.(node.id);
+  }, [prefetchDocument, node]);
+
   const title =
     (activeDocument?.id === node.id ? activeDocument.title : node.title) ||
     t("Untitled");
@@ -107,13 +113,14 @@ function DocumentLink(
     <>
       <SidebarLink
         to={{
-          pathname: sharedDocumentPath(shareId, node.url),
+          pathname: sharedModelPath(shareId, node.url),
           state: {
             title: node.title,
           },
         }}
         expanded={hasChildDocuments && depth !== 0 ? expanded : undefined}
         onDisclosureClick={handleDisclosureClick}
+        onClickIntent={handlePrefetch}
         icon={icon && <Icon value={icon} color={node.color} />}
         label={title}
         depth={depth}
@@ -125,13 +132,14 @@ function DocumentLink(
       />
       {expanded &&
         nodeChildren.map((childNode, index) => (
-          <ObservedDocumentLink
+          <SharedDocumentLink
             shareId={shareId}
             key={childNode.id}
             collection={collection}
             node={childNode}
             activeDocumentId={activeDocumentId}
             activeDocument={activeDocument}
+            prefetchDocument={prefetchDocument}
             isDraft={childNode.isDraft}
             depth={depth + 1}
             index={index}
@@ -142,6 +150,4 @@ function DocumentLink(
   );
 }
 
-const ObservedDocumentLink = observer(React.forwardRef(DocumentLink));
-
-export default ObservedDocumentLink;
+export const SharedDocumentLink = observer(React.forwardRef(DocumentLink));

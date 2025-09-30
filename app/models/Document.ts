@@ -14,8 +14,10 @@ import type {
 import {
   ExportContentType,
   FileOperationFormat,
+  NavigationNodeType,
   NotificationEventType,
 } from "@shared/types";
+import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
 import Storage from "@shared/utils/Storage";
 import { isRTL } from "@shared/utils/rtl";
 import slugify from "@shared/utils/slugify";
@@ -26,10 +28,12 @@ import { client } from "~/utils/ApiClient";
 import { settingsPath } from "~/utils/routeHelpers";
 import Collection from "./Collection";
 import Notification from "./Notification";
+import Pin from "./Pin";
 import View from "./View";
-import ParanoidModel from "./base/ParanoidModel";
+import ArchivableModel from "./base/ArchivableModel";
 import Field from "./decorators/Field";
 import Relation from "./decorators/Relation";
+import { Searchable } from "./interfaces/Searchable";
 
 type SaveOptions = JSONObject & {
   publish?: boolean;
@@ -37,7 +41,7 @@ type SaveOptions = JSONObject & {
   autosave?: boolean;
 };
 
-export default class Document extends ParanoidModel {
+export default class Document extends ArchivableModel implements Searchable {
   static modelName = "Document";
 
   constructor(fields: Record<string, any>, store: DocumentsStore) {
@@ -64,10 +68,6 @@ export default class Document extends ParanoidModel {
 
   store: DocumentsStore;
 
-  @Field
-  @observable
-  id: string;
-
   @observable.shallow
   data: ProsemirrorData;
 
@@ -87,6 +87,11 @@ export default class Document extends ParanoidModel {
     /** The name of the file this document was imported from. */
     fileName?: string;
   };
+
+  @computed
+  get searchContent(): string {
+    return this.title;
+  }
 
   /**
    * The name of the original data source, if imported.
@@ -175,23 +180,24 @@ export default class Document extends ParanoidModel {
   @observable
   parentDocumentId: string | undefined;
 
-  @Relation(() => Document)
+  /**
+   * Parent document that this is a child of, if any.
+   */
+  @Relation(() => Document, { onArchive: "cascade" })
   parentDocument?: Document;
 
   @observable
   collaboratorIds: string[];
 
-  @observable
+  @Relation(() => User)
   createdBy: User | undefined;
 
+  @Relation(() => User)
   @observable
   updatedBy: User | undefined;
 
   @observable
   publishedAt: string | undefined;
-
-  @observable
-  archivedAt: string;
 
   /**
    * @deprecated Use path instead
@@ -251,9 +257,18 @@ export default class Document extends ParanoidModel {
     return isRTL(this.title);
   }
 
+  /**
+   * Returns the initial character of the document title in uppercase
+   */
+  @computed
+  get initial(): string {
+    return (this.title?.charAt(0) ?? "?").toUpperCase();
+  }
+
   @computed
   get path(): string {
-    const prefix = this.template ? settingsPath("templates") : "/doc";
+    const prefix =
+      this.template && !this.isDeleted ? settingsPath("templates") : "/doc";
 
     if (!this.title) {
       return `${prefix}/untitled-${this.urlId}`;
@@ -303,9 +318,7 @@ export default class Document extends ParanoidModel {
    */
   @computed
   get isSubscribed(): boolean {
-    return !!this.store.rootStore.subscriptions.orderedData.find(
-      (subscription) => subscription.documentId === this.id
-    );
+    return !!this.store.rootStore.subscriptions.getByDocumentId(this.id);
   }
 
   /**
@@ -317,13 +330,23 @@ export default class Document extends ParanoidModel {
   get isPubliclyShared(): boolean {
     const { shares, auth } = this.store.rootStore;
     const share = shares.getByDocumentId(this.id);
-    const sharedParent = shares.getByDocumentParents(this.id);
+    const sharedParent = shares.getByDocumentParents(this);
 
     return !!(
       auth.team?.sharing !== false &&
       this.collection?.sharing !== false &&
       (share?.published || (sharedParent?.published && !this.isDraft))
     );
+  }
+
+  /**
+   * Returns the documents that link to this document.
+   *
+   * @returns documents that link to this document
+   */
+  @computed
+  get backlinks(): Document[] {
+    return this.store.getBacklinkedDocuments(this.id);
   }
 
   /**
@@ -438,6 +461,7 @@ export default class Document extends ParanoidModel {
   @action
   share = async () =>
     this.store.rootStore.shares.create({
+      type: "document",
       documentId: this.id,
     });
 
@@ -446,7 +470,11 @@ export default class Document extends ParanoidModel {
   restore = (options?: { revisionId?: string; collectionId?: string }) =>
     this.store.restore(this, options);
 
-  unpublish = () => this.store.unpublish(this);
+  unpublish = (
+    options: { detach?: boolean } = {
+      detach: false,
+    }
+  ) => this.store.unpublish(this, options);
 
   @action
   enableEmbeds = () => {
@@ -459,11 +487,16 @@ export default class Document extends ParanoidModel {
   };
 
   @action
-  pin = (collectionId?: string | null) =>
-    this.store.rootStore.pins.create({
+  pin = async (collectionId?: string | null) => {
+    const pin = new Pin({}, this.store.rootStore.pins);
+
+    await pin.save({
       documentId: this.id,
       ...(collectionId ? { collectionId } : {}),
     });
+
+    return pin;
+  };
 
   @action
   unpin = (collectionId?: string) => {
@@ -497,7 +530,7 @@ export default class Document extends ParanoidModel {
    * @returns A promise that resolves when the subscription is destroyed.
    */
   @action
-  unsubscribe = (userId: string) => this.store.unsubscribe(userId, this);
+  unsubscribe = () => this.store.unsubscribe(this);
 
   @action
   view = () => {
@@ -575,6 +608,8 @@ export default class Document extends ParanoidModel {
     title?: string;
     publish?: boolean;
     recursive?: boolean;
+    collectionId?: string | null;
+    parentDocumentId?: string;
   }) => this.store.duplicate(this, options);
 
   /**
@@ -585,7 +620,7 @@ export default class Document extends ParanoidModel {
    */
   getSummary = (blocks = 4) => ({
     ...this.data,
-    content: this.data.content.slice(0, blocks),
+    content: this.data.content?.slice(0, blocks),
   });
 
   @computed
@@ -619,6 +654,7 @@ export default class Document extends ParanoidModel {
   @computed
   get asNavigationNode(): NavigationNode {
     return {
+      type: NavigationNodeType.Document,
       id: this.id,
       title: this.title,
       color: this.color ?? undefined,
@@ -627,6 +663,28 @@ export default class Document extends ParanoidModel {
       url: this.url,
       isDraft: this.isDraft,
     };
+  }
+
+  /**
+   * Returns all children of the document.
+   * This is determined by the collection structure, or the user/group memberships in case it's a shared document.
+   *
+   * @returns An array of NavigationNode objects.
+   */
+  @computed
+  get children(): NavigationNode[] {
+    const { userMemberships, groupMemberships } = this.store.rootStore;
+    const collection = this.collection;
+
+    const membership =
+      userMemberships.getByDocumentId(this.id) ??
+      groupMemberships.getByDocumentId(this.id);
+
+    return (
+      collection?.getChildrenForDocument(this.id) ??
+      membership?.getChildrenForDocument(this.id) ??
+      []
+    );
   }
 
   /**
@@ -641,8 +699,33 @@ export default class Document extends ParanoidModel {
       nodes: extensionManager.nodes,
       marks: extensionManager.marks,
     });
-    const markdown = serializer.serialize(Node.fromJSON(schema, this.data));
+
+    const doc = Node.fromJSON(
+      schema,
+      ProsemirrorHelper.attachmentsToAbsoluteUrls(this.data)
+    );
+
+    const markdown = serializer.serialize(doc, {
+      softBreak: true,
+    });
     return markdown;
+  };
+
+  /**
+   * Returns the plain text representation of the document derived from the ProseMirror data.
+   *
+   * @returns The plain text representation of the document as a string.
+   */
+  toPlainText = () => {
+    const extensionManager = new ExtensionManager(withComments(richExtensions));
+    const schema = new Schema({
+      nodes: extensionManager.nodes,
+      marks: extensionManager.marks,
+    });
+    const text = ProsemirrorHelper.toPlainText(
+      Node.fromJSON(schema, this.data)
+    );
+    return text;
   };
 
   download = (contentType: ExportContentType) =>

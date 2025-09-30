@@ -1,18 +1,13 @@
 import { observer } from "mobx-react";
-import {
-  TableOfContentsIcon,
-  EditIcon,
-  PlusIcon,
-  MoonIcon,
-  MoreIcon,
-  SunIcon,
-} from "outline-icons";
-import * as React from "react";
+import { TableOfContentsIcon, EditIcon } from "outline-icons";
+import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import styled, { useTheme } from "styled-components";
+import Icon from "@shared/components/Icon";
+import useMeasure from "react-use-measure";
 import { NavigationNode } from "@shared/types";
-import { Theme } from "~/stores/UiStore";
+import { altDisplay, metaDisplay } from "@shared/utils/keyboard";
 import Document from "~/models/Document";
 import Revision from "~/models/Revision";
 import { Action, Separator } from "~/components/Actions";
@@ -20,22 +15,19 @@ import Badge from "~/components/Badge";
 import Button from "~/components/Button";
 import Collaborators from "~/components/Collaborators";
 import DocumentBreadcrumb from "~/components/DocumentBreadcrumb";
-import {
-  useDocumentContext,
-  useEditingFocus,
-} from "~/components/DocumentContext";
+import { useDocumentContext } from "~/components/DocumentContext";
 import Flex from "~/components/Flex";
 import Header from "~/components/Header";
-import Icon from "~/components/Icon";
 import Star from "~/components/Star";
 import Tooltip from "~/components/Tooltip";
 import { publishDocument } from "~/actions/definitions/documents";
 import { navigateToTemplateSettings } from "~/actions/definitions/navigation";
 import { restoreRevision } from "~/actions/definitions/revisions";
-import useActionContext from "~/hooks/useActionContext";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
 import useCurrentUser from "~/hooks/useCurrentUser";
+import useEditingFocus from "~/hooks/useEditingFocus";
 import useKeyDown from "~/hooks/useKeyDown";
+import { useLocationSidebarContext } from "~/hooks/useLocationSidebarContext";
 import useMobile from "~/hooks/useMobile";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
@@ -43,15 +35,14 @@ import DocumentMenu from "~/menus/DocumentMenu";
 import NewChildDocumentMenu from "~/menus/NewChildDocumentMenu";
 import TableOfContentsMenu from "~/menus/TableOfContentsMenu";
 import TemplatesMenu from "~/menus/TemplatesMenu";
-import { metaDisplay } from "~/utils/keyboard";
 import { documentEditPath } from "~/utils/routeHelpers";
 import ObservingBanner from "./ObservingBanner";
 import PublicBreadcrumb from "./PublicBreadcrumb";
 import ShareButton from "./ShareButton";
+import { AppearanceAction } from "~/components/Sharing/components/Actions";
 
 type Props = {
   document: Document;
-  documentHasHeadings: boolean;
   revision: Revision | undefined;
   sharedTree: NavigationNode | undefined;
   shareId: string | null | undefined;
@@ -67,16 +58,10 @@ type Props = {
     publish?: boolean;
     autosave?: boolean;
   }) => void;
-  headings: {
-    title: string;
-    level: number;
-    id: string;
-  }[];
 };
 
 function DocumentHeader({
   document,
-  documentHasHeadings,
   revision,
   shareId,
   isEditing,
@@ -88,57 +73,64 @@ function DocumentHeader({
   sharedTree,
   onSelectTemplate,
   onSave,
-  headings,
 }: Props) {
   const { t } = useTranslation();
   const { ui } = useStores();
   const theme = useTheme();
   const team = useCurrentTeam({ rejectOnEmpty: false });
   const user = useCurrentUser({ rejectOnEmpty: false });
-  const { resolvedTheme } = ui;
-  const isMobile = useMobile();
+  const isMobileMedia = useMobile();
   const isRevision = !!revision;
   const isEditingFocus = useEditingFocus();
-  const { editor } = useDocumentContext();
+  const { hasHeadings, editor } = useDocumentContext();
+  const sidebarContext = useLocationSidebarContext();
+  const [measureRef, size] = useMeasure();
+  const isMobile = isMobileMedia || size.width < 700;
+  const isShare = !!shareId;
 
   // We cache this value for as long as the component is mounted so that if you
   // apply a template there is still the option to replace it until the user
   // navigates away from the doc
-  const [isNew] = React.useState(document.isPersistedOnce);
+  const [isNew] = useState(document.isPersistedOnce);
 
-  const handleSave = React.useCallback(() => {
+  const handleSave = useCallback(() => {
     onSave({
       done: true,
     });
   }, [onSave]);
 
-  const context = useActionContext({
-    activeDocumentId: document?.id,
-  });
+  const handleToggle = useCallback(() => {
+    // Public shares, by default, show ToC on load.
+    if (isShare && ui.tocVisible === undefined) {
+      ui.set({ tocVisible: false });
+    } else {
+      ui.set({ tocVisible: !ui.tocVisible });
+    }
+  }, [ui, isShare]);
 
   const can = usePolicy(document);
   const { isDeleted, isTemplate } = document;
   const isTemplateEditable = can.update && isTemplate;
   const canToggleEmbeds = team?.documentEmbeds;
-  const isShare = !!shareId;
   const showContents =
-    ui.tocVisible === true || (isShare && ui.tocVisible !== false);
+    (ui.tocVisible === true && !document.isTemplate) ||
+    (isShare && ui.tocVisible !== false);
 
   const toc = (
     <Tooltip
       content={
         showContents
           ? t("Hide contents")
-          : documentHasHeadings
-          ? t("Show contents")
-          : `${t("Show contents")} (${t("available when headings are added")})`
+          : hasHeadings
+            ? t("Show contents")
+            : `${t("Show contents")} (${t("available when headings are added")})`
       }
-      shortcut="ctrl+alt+h"
-      delay={250}
+      shortcut={`Ctrl+${altDisplay}+h`}
       placement="bottom"
     >
       <Button
-        onClick={showContents ? ui.hideTableOfContents : ui.showTableOfContents}
+        aria-label={t("Show contents")}
+        onClick={handleToggle}
         icon={<TableOfContentsIcon />}
         borderOnHover
         neutral
@@ -152,13 +144,15 @@ function DocumentHeader({
           noun: document.noun,
         })}
         shortcut="e"
-        delay={500}
         placement="bottom"
       >
         <Button
           as={Link}
           icon={<EditIcon />}
-          to={documentEditPath(document)}
+          to={{
+            pathname: documentEditPath(document),
+            state: { sidebarContext },
+          }}
           neutral
         >
           {isMobile ? null : t("Edit")}
@@ -166,30 +160,10 @@ function DocumentHeader({
       </Tooltip>
     </Action>
   );
-  const appearanceAction = (
-    <Action>
-      <Tooltip
-        content={
-          resolvedTheme === "light" ? t("Switch to dark") : t("Switch to light")
-        }
-        delay={500}
-        placement="bottom"
-      >
-        <Button
-          icon={resolvedTheme === "light" ? <SunIcon /> : <MoonIcon />}
-          onClick={() =>
-            ui.setTheme(resolvedTheme === "light" ? Theme.Dark : Theme.Light)
-          }
-          neutral
-          borderOnHover
-        />
-      </Tooltip>
-    </Action>
-  );
 
   useKeyDown(
-    (event) => event.ctrlKey && event.altKey && event.key === "˙",
-    ui.tocVisible ? ui.hideTableOfContents : ui.showTableOfContents,
+    (event) => event.ctrlKey && event.altKey && event.code === "KeyH",
+    handleToggle,
     {
       allowInInput: true,
     }
@@ -198,6 +172,7 @@ function DocumentHeader({
   if (shareId) {
     return (
       <StyledHeader
+        ref={measureRef}
         $hidden={isEditingFocus}
         title={
           <Flex gap={4}>
@@ -210,20 +185,22 @@ function DocumentHeader({
         hasSidebar={sharedTree && sharedTree.children?.length > 0}
         left={
           isMobile ? (
-            <TableOfContentsMenu headings={headings} />
+            hasHeadings ? (
+              <TableOfContentsMenu />
+            ) : null
           ) : (
             <PublicBreadcrumb
               documentId={document.id}
               shareId={shareId}
               sharedTree={sharedTree}
             >
-              {documentHasHeadings ? toc : null}
+              {hasHeadings ? toc : null}
             </PublicBreadcrumb>
           )
         }
         actions={
           <>
-            {appearanceAction}
+            <AppearanceAction />
             {can.update && !isEditing ? editAction : <div />}
           </>
         }
@@ -234,14 +211,19 @@ function DocumentHeader({
   return (
     <>
       <StyledHeader
+        ref={measureRef}
         $hidden={isEditingFocus}
         hasSidebar
         left={
           isMobile ? (
-            <TableOfContentsMenu headings={headings} />
+            <TableOfContentsMenu />
           ) : (
             <DocumentBreadcrumb document={document}>
-              {toc} <Star document={document} color={theme.textSecondary} />
+              {document.isTemplate ? null : (
+                <>
+                  {toc} <Star document={document} color={theme.textSecondary} />
+                </>
+              )}
             </DocumentBreadcrumb>
           )
         }
@@ -254,7 +236,7 @@ function DocumentHeader({
             {document.isArchived && <Badge>{t("Archived")}</Badge>}
           </Flex>
         }
-        actions={
+        actions={({ isCompact }) => (
           <>
             <ObservingBanner />
 
@@ -262,16 +244,23 @@ function DocumentHeader({
               <Status>{t("Saving")}…</Status>
             )}
             {!isDeleted && !isRevision && can.listViews && (
-              <Collaborators document={document} />
+              <Collaborators
+                document={document}
+                limit={isCompact ? 3 : undefined}
+              />
             )}
-            {(isEditing || !user?.separateEditMode) && !isTemplate && isNew && (
-              <Action>
-                <TemplatesMenu
-                  document={document}
-                  onSelectTemplate={onSelectTemplate}
-                />
-              </Action>
-            )}
+            {(isEditing || !user?.separateEditMode) &&
+              !isTemplate &&
+              isNew &&
+              can.update && (
+                <Action>
+                  <TemplatesMenu
+                    isCompact={isCompact}
+                    document={document}
+                    onSelectTemplate={onSelectTemplate}
+                  />
+                </Action>
+              )}
             {!isEditing && !isRevision && !isTemplate && can.update && (
               <Action>
                 <ShareButton document={document} />
@@ -282,11 +271,9 @@ function DocumentHeader({
                 <Tooltip
                   content={t("Save")}
                   shortcut={`${metaDisplay}+enter`}
-                  delay={500}
                   placement="bottom"
                 >
                   <Button
-                    context={context}
                     action={isTemplate ? navigateToTemplateSettings : undefined}
                     onClick={isTemplate ? undefined : handleSave}
                     disabled={savingIsDisabled}
@@ -306,38 +293,16 @@ function DocumentHeader({
             {can.update &&
               can.createChildDocument &&
               !isRevision &&
+              !isCompact &&
               !isMobile && (
                 <Action>
-                  <NewChildDocumentMenu
-                    document={document}
-                    label={(props) => (
-                      <Tooltip
-                        content={t("New document")}
-                        shortcut="n"
-                        delay={500}
-                        placement="bottom"
-                      >
-                        <Button icon={<PlusIcon />} {...props} neutral>
-                          {t("New doc")}
-                        </Button>
-                      </Tooltip>
-                    )}
-                  />
+                  <NewChildDocumentMenu document={document} />
                 </Action>
               )}
             {revision && revision.createdAt !== document.updatedAt && (
               <Action>
-                <Tooltip
-                  content={t("Restore version")}
-                  delay={500}
-                  placement="bottom"
-                >
-                  <Button
-                    action={restoreRevision}
-                    context={context}
-                    neutral
-                    hideOnActionDisabled
-                  >
+                <Tooltip content={t("Restore version")} placement="bottom">
+                  <Button action={restoreRevision} neutral hideOnActionDisabled>
                     {t("Restore")}
                   </Button>
                 </Tooltip>
@@ -347,7 +312,6 @@ function DocumentHeader({
               <Action>
                 <Button
                   action={publishDocument}
-                  context={context}
                   disabled={publishingIsDisabled}
                   hideOnActionDisabled
                   hideIcon
@@ -362,22 +326,16 @@ function DocumentHeader({
             <Action>
               <DocumentMenu
                 document={document}
-                isRevision={isRevision}
-                label={(props) => (
-                  <Button
-                    icon={<MoreIcon />}
-                    {...props}
-                    borderOnHover
-                    neutral
-                  />
-                )}
+                align="end"
+                neutral
+                onSelectTemplate={onSelectTemplate}
                 onFindAndReplace={editor?.commands.openFindAndReplace}
                 showToggleEmbeds={canToggleEmbeds}
                 showDisplayOptions
               />
             </Action>
           </>
-        }
+        )}
       />
     </>
   );

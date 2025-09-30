@@ -7,7 +7,7 @@ import BaseTask from "./BaseTask";
 type Props = {
   collectionId: string;
   actorId: string;
-  ip: string;
+  ip: string | null;
 };
 
 export default class DetachDraftsFromCollectionTask extends BaseTask<Props> {
@@ -19,7 +19,11 @@ export default class DetachDraftsFromCollectionTask extends BaseTask<Props> {
       User.findByPk(props.actorId),
     ]);
 
-    if (!actor || !collection || !collection.deletedAt) {
+    if (
+      !actor ||
+      !collection ||
+      !(collection.deletedAt || collection.archivedAt)
+    ) {
       return;
     }
 

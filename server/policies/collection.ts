@@ -2,7 +2,7 @@ import invariant from "invariant";
 import filter from "lodash/filter";
 import { CollectionPermission } from "@shared/types";
 import { Collection, User, Team } from "@server/models";
-import { allow, can } from "./cancan";
+import { allow } from "./cancan";
 import { and, isTeamAdmin, isTeamModel, isTeamMutable, or } from "./utils";
 
 allow(User, "createCollection", Team, (actor, team) =>
@@ -28,7 +28,7 @@ allow(User, "move", Collection, (actor, collection) =>
     //
     isTeamAdmin(actor, collection),
     isTeamMutable(actor),
-    !collection?.deletedAt
+    !!collection?.isActive
   )
 );
 
@@ -49,7 +49,7 @@ allow(User, "read", Collection, (user, collection) => {
 
 allow(
   User,
-  ["readDocument", "star", "unstar"],
+  ["readDocument", "star", "unstar", "subscribe", "unsubscribe"],
   Collection,
   (user, collection) => {
     if (!collection || user.teamId !== collection.teamId) {
@@ -65,15 +65,6 @@ allow(
 
     return true;
   }
-);
-
-allow(User, "export", Collection, (actor, collection) =>
-  and(
-    //
-    can(actor, "read", collection),
-    !actor.isViewer,
-    !actor.isGuest
-  )
 );
 
 allow(User, "share", Collection, (user, collection) => {
@@ -105,14 +96,38 @@ allow(User, "share", Collection, (user, collection) => {
   return true;
 });
 
+allow(User, "updateDocument", Collection, (user, collection) => {
+  if (!collection || !isTeamModel(user, collection) || !isTeamMutable(user)) {
+    return false;
+  }
+
+  if (!collection.isPrivate && user.isAdmin) {
+    return true;
+  }
+
+  if (
+    collection.permission !== CollectionPermission.ReadWrite ||
+    user.isViewer ||
+    user.isGuest
+  ) {
+    return includesMembership(collection, [
+      CollectionPermission.ReadWrite,
+      CollectionPermission.Admin,
+    ]);
+  }
+
+  return true;
+});
+
 allow(
   User,
-  ["updateDocument", "createDocument", "deleteDocument"],
+  ["createDocument", "deleteDocument"],
   Collection,
   (user, collection) => {
     if (
       !collection ||
-      user.teamId !== collection.teamId ||
+      !collection.isActive ||
+      !isTeamModel(user, collection) ||
       !isTeamMutable(user)
     ) {
       return false;
@@ -137,16 +152,38 @@ allow(
   }
 );
 
-allow(User, ["update", "delete"], Collection, (user, collection) => {
-  if (!collection || user.isGuest || user.teamId !== collection.teamId) {
-    return false;
-  }
-  if (user.isAdmin) {
-    return true;
-  }
+allow(User, ["update", "export", "archive"], Collection, (user, collection) =>
+  and(
+    !!collection,
+    !!collection?.isActive,
+    or(
+      isTeamAdmin(user, collection),
+      includesMembership(collection, [CollectionPermission.Admin])
+    )
+  )
+);
 
-  return includesMembership(collection, [CollectionPermission.Admin]);
-});
+allow(User, "delete", Collection, (user, collection) =>
+  and(
+    !!collection,
+    !collection?.deletedAt,
+    or(
+      isTeamAdmin(user, collection),
+      includesMembership(collection, [CollectionPermission.Admin])
+    )
+  )
+);
+
+allow(User, "restore", Collection, (user, collection) =>
+  and(
+    !!collection,
+    !collection?.isActive,
+    or(
+      isTeamAdmin(user, collection),
+      includesMembership(collection, [CollectionPermission.Admin])
+    )
+  )
+);
 
 function includesMembership(
   collection: Collection | null,

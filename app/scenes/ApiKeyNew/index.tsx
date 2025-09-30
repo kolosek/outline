@@ -7,7 +7,7 @@ import { ApiKeyValidation } from "@shared/validations";
 import Button from "~/components/Button";
 import Flex from "~/components/Flex";
 import Input from "~/components/Input";
-import InputSelect, { Option } from "~/components/InputSelect";
+import { InputSelect, Option } from "~/components/InputSelect";
 import Text from "~/components/Text";
 import useStores from "~/hooks/useStores";
 import useUserLocale from "~/hooks/useUserLocale";
@@ -22,6 +22,7 @@ type Props = {
 
 function ApiKeyNew({ onSubmit }: Props) {
   const [name, setName] = React.useState("");
+  const [scope, setScope] = React.useState("");
   const [expiryType, setExpiryType] = React.useState<ExpiryType>(
     ExpiryType.Week
   );
@@ -41,6 +42,7 @@ function ApiKeyNew({ onSubmit }: Props) {
   const expiryOptions = React.useMemo<Option[]>(
     () =>
       [...ExpiryValues.entries()].map(([expType, { label }]) => ({
+        type: "item",
         label,
         value: expType,
       })),
@@ -49,6 +51,10 @@ function ApiKeyNew({ onSubmit }: Props) {
 
   const handleNameChange = React.useCallback((event) => {
     setName(event.target.value);
+  }, []);
+
+  const handleScopeChange = React.useCallback((event) => {
+    setScope(event.target.value);
   }, []);
 
   const handleExpiryTypeChange = React.useCallback((value: string) => {
@@ -70,8 +76,13 @@ function ApiKeyNew({ onSubmit }: Props) {
         await apiKeys.create({
           name,
           expiresAt: expiresAt?.toISOString(),
+          scope: scope ? scope.split(" ") : undefined,
         });
-        toast.success(t("API key created"));
+        toast.success(
+          t(
+            "API key created. Please copy the value now as it will not be shown again."
+          )
+        );
         onSubmit();
       } catch (err) {
         toast.error(err.message);
@@ -79,20 +90,16 @@ function ApiKeyNew({ onSubmit }: Props) {
         setIsSaving(false);
       }
     },
-    [t, name, expiresAt, onSubmit, apiKeys]
+    [t, name, scope, expiresAt, onSubmit, apiKeys]
   );
 
   return (
     <form onSubmit={handleSubmit}>
-      <Text as="p" type="secondary">
-        {t(
-          `Name your key something that will help you to remember it's use in the future, for example "local development" or "continuous integration".`
-        )}
-      </Text>
       <Flex column>
         <Input
           type="text"
           label={t("Name")}
+          placeholder={t("Development")}
           onChange={handleNameChange}
           value={name}
           minLength={ApiKeyValidation.minNameLength}
@@ -101,14 +108,26 @@ function ApiKeyNew({ onSubmit }: Props) {
           autoFocus
           flex
         />
+        <Input
+          type="text"
+          label={t("Scopes")}
+          placeholder="documents.info"
+          onChange={handleScopeChange}
+          value={scope}
+          flex
+        />
+        <Text type="secondary" size="small" as="p">
+          {t(
+            "Space-separated scopes restrict the access of this API key to specific parts of the API. Leave blank for full access"
+          )}
+          .
+        </Text>
         <Flex align="center" gap={16}>
           <StyledExpirySelect
-            ariaLabel={t("Expiration")}
-            label={t("Expiration")}
-            value={expiryType}
             options={expiryOptions}
+            value={expiryType}
             onChange={handleExpiryTypeChange}
-            skipBodyScroll={true}
+            label={t("Expiration")}
           />
           {expiryType === ExpiryType.Custom ? (
             <ExpiryDatePicker
@@ -134,7 +153,8 @@ function ApiKeyNew({ onSubmit }: Props) {
 }
 
 const StyledExpirySelect = styled(InputSelect)`
-  width: 150px;
+  width: 150px !important;
+  margin-bottom: 16px;
 `;
 
 const StyledExpiryText = styled(Text)`

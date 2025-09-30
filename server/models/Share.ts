@@ -20,6 +20,7 @@ import {
 import { UrlHelper } from "@shared/utils/UrlHelper";
 import env from "@server/env";
 import { ValidationError } from "@server/errors";
+import { APIContext } from "@server/types";
 import Collection from "./Collection";
 import Document from "./Document";
 import Team from "./Team";
@@ -36,17 +37,37 @@ import Length from "./validators/Length";
       paranoid: false,
     },
     {
+      association: "collection",
+      required: false,
+    },
+    {
       association: "document",
       required: false,
     },
     {
       association: "team",
+      required: true,
     },
   ],
 }))
 @Scopes(() => ({
   withCollectionPermissions: (userId: string) => ({
     include: [
+      {
+        attributes: [
+          "id",
+          "name",
+          "permission",
+          "sharing",
+          "urlId",
+          "teamId",
+          "deletedAt",
+        ],
+        model: Collection.scope({
+          method: ["withMembership", userId],
+        }),
+        as: "collection",
+      },
       {
         model: Document.scope([
           "withDrafts",
@@ -58,7 +79,15 @@ import Length from "./validators/Length";
         as: "document",
         include: [
           {
-            attributes: ["id", "permission", "sharing", "teamId", "deletedAt"],
+            attributes: [
+              "id",
+              "name",
+              "permission",
+              "urlId",
+              "sharing",
+              "teamId",
+              "deletedAt",
+            ],
             model: Collection.scope({
               method: ["withMembership", userId],
             }),
@@ -112,6 +141,14 @@ class Share extends IdModel<
   @IsFQDN
   @Column
   domain: string | null;
+
+  @Default(false)
+  @Column
+  allowIndexing: boolean;
+
+  @Default(false)
+  @Column
+  showLastUpdated: boolean;
 
   // hooks
 
@@ -177,17 +214,25 @@ class Share extends IdModel<
   @Column(DataType.UUID)
   teamId: string;
 
+  @BelongsTo(() => Collection, "collectionId")
+  collection: Collection | null;
+
+  @ForeignKey(() => Collection)
+  @Column(DataType.UUID)
+  collectionId: string | null;
+
   @BelongsTo(() => Document, "documentId")
   document: Document | null;
 
   @ForeignKey(() => Document)
   @Column(DataType.UUID)
-  documentId: string;
+  documentId: string | null;
 
-  revoke(userId: string) {
+  revoke(ctx: APIContext) {
+    const { user } = ctx.state.auth;
     this.revokedAt = new Date();
-    this.revokedById = userId;
-    return this.save();
+    this.revokedById = user.id;
+    return this.saveWithCtx(ctx, undefined, { name: "revoke" });
   }
 }
 

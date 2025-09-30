@@ -1,5 +1,5 @@
 import { NodeType } from "prosemirror-model";
-import { wrapInList, liftListItem } from "prosemirror-schema-list";
+import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import { Command } from "prosemirror-state";
 import { chainTransactions } from "../lib/chainTransactions";
 import { findParentNode } from "../queries/findParentNode";
@@ -8,7 +8,8 @@ import clearNodes from "./clearNodes";
 
 export default function toggleList(
   listType: NodeType,
-  itemType: NodeType
+  itemType: NodeType,
+  listStyle?: string
 ): Command {
   return (state, dispatch) => {
     const { schema, selection } = state;
@@ -25,28 +26,49 @@ export default function toggleList(
     );
 
     if (range.depth >= 1 && parentList && range.depth - parentList.depth <= 1) {
-      if (parentList.node.type === listType) {
+      const currentStyle = parentList.node.attrs.listStyle;
+      const differentListStyle = currentStyle && currentStyle !== listStyle;
+
+      if (
+        parentList.node.type === listType &&
+        (!differentListStyle || !listStyle)
+      ) {
         return liftListItem(itemType)(state, dispatch);
+      }
+
+      const currentItemType = parentList.node.content.firstChild?.type;
+      const differentType = currentItemType && currentItemType !== itemType;
+
+      if (differentType || differentListStyle) {
+        return chainTransactions(
+          clearNodes(),
+          wrapInList(listType, { listStyle })
+        )(state, dispatch);
       }
 
       if (
         isList(parentList.node, schema) &&
         listType.validContent(parentList.node.content)
       ) {
-        tr.setNodeMarkup(parentList.pos, listType);
+        tr.setNodeMarkup(
+          parentList.pos,
+          listType,
+          listStyle ? { listStyle } : {}
+        );
 
         dispatch?.(tr);
         return false;
       }
     }
 
-    const canWrapInList = wrapInList(listType)(state);
+    const attrs = listStyle ? { listStyle } : undefined;
+    const canWrapInList = wrapInList(listType, attrs)(state);
 
     if (canWrapInList) {
-      return wrapInList(listType)(state, dispatch);
+      return wrapInList(listType, attrs)(state, dispatch);
     }
 
-    return chainTransactions(clearNodes(), wrapInList(listType))(
+    return chainTransactions(clearNodes(), wrapInList(listType, attrs))(
       state,
       dispatch
     );

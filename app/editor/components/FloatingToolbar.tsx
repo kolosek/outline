@@ -7,8 +7,9 @@ import { isCode } from "@shared/editor/lib/isCode";
 import { findParentNode } from "@shared/editor/queries/findParentNode";
 import { EditorStyleHelper } from "@shared/editor/styles/EditorStyleHelper";
 import { depths, s } from "@shared/styles";
+import { getSafeAreaInsets } from "@shared/utils/browser";
+import { HEADER_HEIGHT } from "~/components/Header";
 import { Portal } from "~/components/Portal";
-import useComponentSize from "~/hooks/useComponentSize";
 import useEventListener from "~/hooks/useEventListener";
 import useMobile from "~/hooks/useMobile";
 import useWindowSize from "~/hooks/useWindowSize";
@@ -16,6 +17,7 @@ import Logger from "~/utils/Logger";
 import { useEditor } from "./EditorContext";
 
 type Props = {
+  align?: "start" | "end" | "center";
   active?: boolean;
   children: React.ReactNode;
   width?: number;
@@ -34,15 +36,18 @@ const defaultPosition = {
 function usePosition({
   menuRef,
   active,
+  align = "center",
 }: {
   menuRef: React.RefObject<HTMLDivElement>;
   active?: boolean;
+  align?: Props["align"];
 }) {
   const { view } = useEditor();
   const { selection } = view.state;
-  const { width: menuWidth, height: menuHeight } = useComponentSize(menuRef);
+  const menuWidth = menuRef.current?.offsetWidth ?? 0;
+  const menuHeight = menuRef.current?.offsetHeight ?? 0;
 
-  if (!active || !menuWidth || !menuHeight || !menuRef.current) {
+  if (!active || !menuRef.current) {
     return defaultPosition;
   }
 
@@ -77,13 +82,24 @@ function usePosition({
 
   // position at the top right of code blocks
   const codeBlock = findParentNode(isCode)(view.state.selection);
+  const noticeBlock = findParentNode(
+    (node) => node.type.name === "container_notice"
+  )(view.state.selection);
 
-  if (codeBlock && view.state.selection.empty) {
-    const element = view.nodeDOM(codeBlock.pos);
-    const bounds = (element as HTMLElement).getBoundingClientRect();
-    selectionBounds.top = bounds.top;
-    selectionBounds.left = bounds.right - menuWidth;
-    selectionBounds.right = bounds.right;
+  if ((codeBlock || noticeBlock) && view.state.selection.empty) {
+    const position = codeBlock
+      ? codeBlock.pos
+      : noticeBlock
+        ? noticeBlock.pos
+        : null;
+
+    if (position !== null) {
+      const element = view.nodeDOM(position);
+      const bounds = (element as HTMLElement).getBoundingClientRect();
+      selectionBounds.top = bounds.top;
+      selectionBounds.left = bounds.right;
+      selectionBounds.right = bounds.right;
+    }
   }
 
   // tables are an oddity, and need their own positioning logic
@@ -134,55 +150,67 @@ function usePosition({
 
     // Images are wrapped which impacts positioning - need to get the element
     // specifically tagged as the handle
-    const imageElement = (element as HTMLElement).getElementsByClassName(
-      EditorStyleHelper.imageHandle
-    )[0];
-    const { left, top, width } = imageElement.getBoundingClientRect();
+    const imageElement = element
+      ? (element as HTMLElement).getElementsByClassName(
+          EditorStyleHelper.imageHandle
+        )[0]
+      : undefined;
+    if (imageElement) {
+      const { left, top, width } = imageElement.getBoundingClientRect();
 
-    return {
-      left: Math.round(left + width / 2 - menuWidth / 2 - offsetParent.left),
-      top: Math.round(top - menuHeight - offsetParent.top),
-      offset: 0,
-      visible: true,
-    };
-  } else {
-    // calculate the horizontal center of the selection
-    const halfSelection =
-      Math.abs(selectionBounds.right - selectionBounds.left) / 2;
-    const centerOfSelection = selectionBounds.left + halfSelection;
+      return {
+        left: Math.round(left + width / 2 - menuWidth / 2 - offsetParent.left),
+        top: Math.round(top - menuHeight - offsetParent.top),
+        offset: 0,
+        visible: true,
+      };
+    }
+  }
 
-    // position the menu so that it is centered over the selection except in
-    // the cases where it would extend off the edge of the screen. In these
-    // instances leave a margin
-    const margin = 12;
-    const left = Math.min(
-      Math.min(
-        offsetParent.x + offsetParent.width - menuWidth - margin,
-        window.innerWidth - margin
-      ),
-      Math.max(
-        Math.max(offsetParent.x, margin),
-        centerOfSelection - menuWidth / 2
-      )
-    );
-    const top = Math.min(
+  // calculate the horizontal center of the selection
+  const halfSelection =
+    Math.abs(selectionBounds.right - selectionBounds.left) / 2;
+  const centerOfSelection = selectionBounds.left + halfSelection;
+
+  // position the menu so that it is centered over the selection except in
+  // the cases where it would extend off the edge of the screen. In these
+  // instances leave a margin
+  const margin = 12;
+  const left = Math.min(
+    Math.min(
+      offsetParent.x + offsetParent.width - menuWidth - margin,
+      window.innerWidth - margin
+    ),
+    Math.max(
+      Math.max(offsetParent.x, margin),
+      align === "center"
+        ? centerOfSelection - menuWidth / 2
+        : align === "start"
+          ? selectionBounds.left
+          : selectionBounds.right
+    )
+  );
+  const top = Math.max(
+    HEADER_HEIGHT,
+    Math.min(
       window.innerHeight - menuHeight - margin,
       Math.max(margin, selectionBounds.top - menuHeight)
-    );
+    )
+  );
 
-    // if the menu has been offset to not extend offscreen then we should adjust
-    // the position of the triangle underneath to correctly point to the center
-    // of the selection still
-    const offset = left - (centerOfSelection - menuWidth / 2);
-    return {
-      left: Math.round(left - offsetParent.left),
-      top: Math.round(top - offsetParent.top),
-      offset: Math.round(offset),
-      maxWidth: Math.min(window.innerWidth - margin * 2, offsetParent.width),
-      blockSelection: codeBlock || isColSelection || isRowSelection,
-      visible: true,
-    };
-  }
+  // if the menu has been offset to not extend offscreen then we should adjust
+  // the position of the triangle underneath to correctly point to the center
+  // of the selection still
+  const offset = left - (centerOfSelection - menuWidth / 2);
+  return {
+    left: Math.max(margin, Math.round(left - offsetParent.left)),
+    top: Math.round(top - offsetParent.top),
+    offset: Math.round(offset),
+    maxWidth: Math.min(window.innerWidth, offsetParent.width) - margin * 2,
+    blockSelection:
+      codeBlock || isColSelection || isRowSelection || noticeBlock,
+    visible: true,
+  };
 }
 
 const FloatingToolbar = React.forwardRef(function FloatingToolbar_(
@@ -195,6 +223,7 @@ const FloatingToolbar = React.forwardRef(function FloatingToolbar_(
   let position = usePosition({
     menuRef,
     active: props.active,
+    align: props.align,
   });
 
   if (isSelectingText) {
@@ -219,14 +248,18 @@ const FloatingToolbar = React.forwardRef(function FloatingToolbar_(
       return null;
     }
 
-    if (props.active) {
+    if (props.active && position.visible) {
       const rect = document.body.getBoundingClientRect();
+      const safeAreaInsets = getSafeAreaInsets();
+
       return (
         <ReactPortal>
           <MobileWrapper
             ref={menuRef}
             style={{
-              bottom: `calc(100% - ${height - rect.y}px)`,
+              bottom: `calc(100% - ${
+                height - rect.y - safeAreaInsets.bottom
+              }px)`,
             }}
           >
             {props.children}
@@ -252,7 +285,7 @@ const FloatingToolbar = React.forwardRef(function FloatingToolbar_(
           left: `${position.left}px`,
         }}
       >
-        {props.children}
+        <Background align={props.align}>{props.children}</Background>
       </Wrapper>
     </Portal>
   );
@@ -277,7 +310,7 @@ const arrow = (props: WrapperProps) =>
           border-radius: 3px;
           z-index: -1;
           position: absolute;
-          bottom: -2px;
+          bottom: -3px;
           left: calc(50% - ${props.$offset || 0}px);
           pointer-events: none;
         }
@@ -310,21 +343,42 @@ const MobileWrapper = styled.div`
   }
 `;
 
-const Wrapper = styled.div<WrapperProps>`
-  will-change: opacity, transform;
-  padding: 6px;
-  position: absolute;
-  z-index: ${depths.editorToolbar};
-  opacity: 0;
+const Background = styled.div<{ align: Props["align"] }>`
+  position: relative;
   background-color: ${s("menuBackground")};
   box-shadow: ${s("menuShadow")};
   border-radius: 4px;
+  height: 36px;
+  padding: 6px;
+
+  ${(props) =>
+    props.align === "start" &&
+    `
+    position: absolute;
+    left: 0;
+    bottom: 0;
+  `}
+
+  ${(props) =>
+    props.align === "end" &&
+    `
+    position: absolute;
+    right: 0;
+    bottom: 0;
+  `}
+`;
+
+const Wrapper = styled.div<WrapperProps>`
+  will-change: opacity, transform;
+  position: absolute;
+  z-index: ${depths.editorToolbar};
+  opacity: 0;
   transform: scale(0.95);
-  transition: opacity 150ms cubic-bezier(0.175, 0.885, 0.32, 1.275),
+  transition:
+    opacity 150ms cubic-bezier(0.175, 0.885, 0.32, 1.275),
     transform 150ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
   transition-delay: 150ms;
   line-height: 0;
-  height: 36px;
   box-sizing: border-box;
   pointer-events: none;
   white-space: nowrap;

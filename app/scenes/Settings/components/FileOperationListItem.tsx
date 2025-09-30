@@ -4,6 +4,7 @@ import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useTheme } from "styled-components";
+import Spinner from "@shared/components/Spinner";
 import {
   FileOperationFormat,
   FileOperationState,
@@ -13,7 +14,6 @@ import FileOperation from "~/models/FileOperation";
 import { Action } from "~/components/Actions";
 import ConfirmationDialog from "~/components/ConfirmationDialog";
 import ListItem from "~/components/List/Item";
-import Spinner from "~/components/Spinner";
 import Time from "~/components/Time";
 import useCurrentUser from "~/hooks/useCurrentUser";
 import useStores from "~/hooks/useStores";
@@ -38,7 +38,7 @@ const FileOperationListItem = ({ fileOperation }: Props) => {
     [FileOperationState.Error]: t("Failed"),
   };
 
-  const iconMapping = {
+  const iconMapping: Record<FileOperationState, React.JSX.Element> = {
     [FileOperationState.Creating]: <Spinner />,
     [FileOperationState.Uploading]: <Spinner />,
     [FileOperationState.Expired]: <ArchiveIcon color={theme.textTertiary} />,
@@ -46,8 +46,9 @@ const FileOperationListItem = ({ fileOperation }: Props) => {
     [FileOperationState.Error]: <WarningIcon color={theme.danger} />,
   };
 
-  const formatMapping = {
+  const formatMapping: Record<FileOperationFormat, string> = {
     [FileOperationFormat.JSON]: "JSON",
+    [FileOperationFormat.Notion]: "Notion",
     [FileOperationFormat.MarkdownZip]: "Markdown",
     [FileOperationFormat.HTMLZip]: "HTML",
     [FileOperationFormat.PDF]: "PDF",

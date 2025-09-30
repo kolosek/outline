@@ -1,12 +1,15 @@
 import { observer } from "mobx-react";
-import * as React from "react";
+import { useEffect, useRef, Fragment } from "react";
 import { Trans } from "react-i18next";
 import { useLocation } from "react-router-dom";
 import styled from "styled-components";
 import Document from "~/models/Document";
 import Fade from "~/components/Fade";
+import { determineSidebarContext } from "~/components/Sidebar/components/SidebarContext";
 import Tab from "~/components/Tab";
 import Tabs from "~/components/Tabs";
+import useCurrentUser from "~/hooks/useCurrentUser";
+import { useLocationSidebarContext } from "~/hooks/useLocationSidebarContext";
 import useStores from "~/hooks/useStores";
 import ReferenceListItem from "./ReferenceListItem";
 
@@ -15,35 +18,46 @@ type Props = {
 };
 
 function References({ document }: Props) {
-  const { collections, documents } = useStores();
+  const { documents } = useStores();
+  const user = useCurrentUser();
   const location = useLocation();
+  const locationSidebarContext = useLocationSidebarContext();
 
-  React.useEffect(() => {
+  useEffect(() => {
     void documents.fetchBacklinks(document.id);
   }, [documents, document.id]);
 
-  const backlinks = documents.getBacklinkedDocuments(document.id);
-  const collection = document.collectionId
-    ? collections.get(document.collectionId)
-    : undefined;
-  const children = collection
-    ? collection.getChildrenForDocument(document.id)
-    : [];
+  const backlinks = document.backlinks;
+  const children = document.children;
   const showBacklinks = !!backlinks.length;
   const showChildDocuments = !!children.length;
+  const shouldFade = useRef(!showBacklinks && !showChildDocuments);
   const isBacklinksTab = location.hash === "#backlinks" || !showChildDocuments;
   const height = Math.max(backlinks.length, children.length) * 40;
+  const Component = shouldFade.current ? Fade : Fragment;
 
   return showBacklinks || showChildDocuments ? (
-    <Fade>
+    <Component>
       <Tabs>
         {showChildDocuments && (
-          <Tab to="#children" isActive={() => !isBacklinksTab}>
+          <Tab
+            to={{
+              hash: "#children",
+              state: { sidebarContext: locationSidebarContext },
+            }}
+            isActive={() => !isBacklinksTab}
+          >
             <Trans>Documents</Trans>
           </Tab>
         )}
         {showBacklinks && (
-          <Tab to="#backlinks" isActive={() => isBacklinksTab}>
+          <Tab
+            to={{
+              hash: "#backlinks",
+              state: { sidebarContext: locationSidebarContext },
+            }}
+            isActive={() => isBacklinksTab}
+          >
             <Trans>Backlinks</Trans>
           </Tab>
         )}
@@ -59,6 +73,11 @@ function References({ document }: Props) {
                 showCollection={
                   backlinkedDocument.collectionId !== document.collectionId
                 }
+                sidebarContext={determineSidebarContext({
+                  document: backlinkedDocument,
+                  user,
+                  currentContext: locationSidebarContext,
+                })}
               />
             ))}
           </List>
@@ -74,13 +93,14 @@ function References({ document }: Props) {
                   key={node.id}
                   document={document || node}
                   showCollection={false}
+                  sidebarContext={locationSidebarContext}
                 />
               );
             })}
           </List>
         )}
       </Content>
-    </Fade>
+    </Component>
   ) : null;
 }
 

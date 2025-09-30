@@ -1,19 +1,23 @@
 import { LocationDescriptor } from "history";
 import { observer, useObserver } from "mobx-react";
 import { CommentIcon } from "outline-icons";
-import * as React from "react";
+import { useRef, Fragment } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useRouteMatch } from "react-router-dom";
+import { Link } from "react-router-dom";
 import styled from "styled-components";
 import { TeamPreference } from "@shared/types";
 import Document from "~/models/Document";
 import Revision from "~/models/Revision";
-import DocumentMeta from "~/components/DocumentMeta";
+import { openDocumentInsights } from "~/actions/definitions/documents";
+import DocumentMeta, { Separator } from "~/components/DocumentMeta";
 import Fade from "~/components/Fade";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
+import { useLocationSidebarContext } from "~/hooks/useLocationSidebarContext";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
-import { documentPath, documentInsightsPath } from "~/utils/routeHelpers";
+import breakpoint from "styled-components-breakpoint";
+import { documentPath } from "~/utils/routeHelpers";
+import NudeButton from "~/components/NudeButton";
 
 type Props = {
   /* The document to display meta data for */
@@ -26,27 +30,30 @@ type Props = {
 function TitleDocumentMeta({ to, document, revision, ...rest }: Props) {
   const { views, comments, ui } = useStores();
   const { t } = useTranslation();
-  const match = useRouteMatch();
+  const sidebarContext = useLocationSidebarContext();
   const team = useCurrentTeam();
   const documentViews = useObserver(() => views.inDocument(document.id));
   const totalViewers = documentViews.length;
   const onlyYou = totalViewers === 1 && documentViews[0].userId;
-  const viewsLoadedOnMount = React.useRef(totalViewers > 0);
+  const viewsLoadedOnMount = useRef(totalViewers > 0);
   const can = usePolicy(document);
 
-  const Wrapper = viewsLoadedOnMount.current ? React.Fragment : Fade;
+  const Wrapper = viewsLoadedOnMount.current ? Fragment : Fade;
 
-  const insightsPath = documentInsightsPath(document);
   const commentsCount = comments.unresolvedCommentsInDocumentCount(document.id);
+  const commentingEnabled = !!team.getPreference(TeamPreference.Commenting);
 
   return (
     <Meta document={document} revision={revision} to={to} replace {...rest}>
-      {team.getPreference(TeamPreference.Commenting) && can.comment && (
+      {commentingEnabled && can.comment && (
         <>
-          &nbsp;•&nbsp;
+          <Separator />
           <CommentLink
-            to={documentPath(document)}
-            onClick={() => ui.toggleComments(document.id)}
+            to={{
+              pathname: documentPath(document),
+              state: { sidebarContext },
+            }}
+            onClick={() => ui.toggleComments()}
           >
             <CommentIcon size={18} />
             {commentsCount
@@ -60,19 +67,15 @@ function TitleDocumentMeta({ to, document, revision, ...rest }: Props) {
       !document.isDraft &&
       !document.isTemplate ? (
         <Wrapper>
-          &nbsp;•&nbsp;
-          <Link
-            to={
-              match.url === insightsPath ? documentPath(document) : insightsPath
-            }
-          >
+          <Separator />
+          <InsightsButton action={openDocumentInsights}>
             {t("Viewed by")}{" "}
             {onlyYou
               ? t("only you")
               : `${totalViewers} ${
                   totalViewers === 1 ? t("person") : t("people")
                 }`}
-          </Link>
+          </InsightsButton>
         </Wrapper>
       ) : null}
     </Meta>
@@ -84,6 +87,20 @@ const CommentLink = styled(Link)`
   align-items: center;
 `;
 
+const InsightsButton = styled(NudeButton)`
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  cursor: var(--pointer);
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
 export const Meta = styled(DocumentMeta)<{ rtl?: boolean }>`
   justify-content: ${(props) => (props.rtl ? "flex-end" : "flex-start")};
   margin: -12px 0 2em 0;
@@ -91,6 +108,16 @@ export const Meta = styled(DocumentMeta)<{ rtl?: boolean }>`
   position: relative;
   user-select: none;
   z-index: 1;
+
+  ${breakpoint("mobile", "tablet")`
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.6;
+
+    ${Separator} {
+      display: none;
+    }
+  `}
 
   a {
     color: inherit;

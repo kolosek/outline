@@ -10,12 +10,16 @@ import presentFileOperation from "./fileOperation";
 import presentGroup from "./group";
 import presentGroupMembership from "./groupMembership";
 import presentGroupUser from "./groupUser";
+import presentImport from "./import";
 import presentIntegration from "./integration";
 import presentMembership from "./membership";
+import presentOAuthClient, { presentPublishedOAuthClient } from "./oauthClient";
 import presentPin from "./pin";
 import presentPolicies from "./policy";
 import presentProviderConfig from "./providerConfig";
 import presentPublicTeam from "./publicTeam";
+import presentReaction from "./reaction";
+import presentRelationship from "./relationship";
 import presentRevision from "./revision";
 import presentSearchQuery from "./searchQuery";
 import presentShare from "./share";
@@ -38,12 +42,17 @@ export {
   presentGroup,
   presentGroupUser,
   presentGroupMembership,
+  presentImport,
   presentIntegration,
   presentMembership,
+  presentOAuthClient,
+  presentPublishedOAuthClient,
   presentPublicTeam,
   presentPin,
   presentPolicies,
   presentProviderConfig,
+  presentReaction,
+  presentRelationship,
   presentRevision,
   presentSearchQuery,
   presentShare,

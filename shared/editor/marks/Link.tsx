@@ -1,4 +1,4 @@
-import Token from "markdown-it/lib/token";
+import { Token } from "markdown-it";
 import { toggleMark } from "prosemirror-commands";
 import { InputRule } from "prosemirror-inputrules";
 import { MarkdownSerializerState } from "prosemirror-markdown";
@@ -14,7 +14,6 @@ import { toast } from "sonner";
 import { sanitizeUrl } from "../../utils/urls";
 import { getMarkRange } from "../queries/getMarkRange";
 import { isMarkActive } from "../queries/isMarkActive";
-import { EventType } from "../types";
 import Mark from "./Mark";
 
 const LINK_INPUT_REGEX = /\[([^[]+)]\((\S+)\)$/;
@@ -56,15 +55,17 @@ export default class Link extends Mark {
       attrs: {
         href: {
           default: "",
+          validate: "string",
         },
         title: {
           default: null,
+          validate: "string|null",
         },
       },
       inclusive: false,
       parseDOM: [
         {
-          tag: "a[href]",
+          tag: "a[href]:not(.embed)",
           getAttrs: (dom: HTMLElement) => ({
             href: dom.getAttribute("href"),
             title: dom.getAttribute("title"),
@@ -107,8 +108,7 @@ export default class Link extends Mark {
     return {
       "Mod-k": (state, dispatch) => {
         if (state.selection.empty) {
-          this.editor.events.emit(EventType.LinkToolbarOpen);
-          return true;
+          return false;
         }
 
         return toggleMark(type, { href: "" })(state, dispatch);
@@ -126,7 +126,7 @@ export default class Link extends Mark {
                 sanitizeUrl(range.mark.attrs.href),
                 event
               );
-            } catch (err) {
+            } catch (_err) {
               toast.error(this.options.dictionary.openLinkError);
             }
             return true;
@@ -156,7 +156,7 @@ export default class Link extends Mark {
 
         view.dispatch(tr);
         return true;
-      } catch (err) {
+      } catch (_err) {
         // Failed to set selection
       }
       return false;
@@ -179,15 +179,17 @@ export default class Link extends Mark {
           },
           mousedown: (view: EditorView, event: MouseEvent) => {
             const target = (event.target as HTMLElement)?.closest("a");
-            if (!(target instanceof HTMLAnchorElement) || event.button !== 0) {
+            if (
+              !(target instanceof HTMLAnchorElement) ||
+              (event.button !== 0 && event.button !== 1)
+            ) {
               return false;
             }
 
-            if (target.matches(".component-attachment *")) {
-              return false;
-            }
-
-            if (target.role === "button") {
+            if (
+              target.role === "button" ||
+              target.matches(".component-attachment *")
+            ) {
               return false;
             }
 
@@ -206,7 +208,7 @@ export default class Link extends Mark {
                   event.preventDefault();
                   this.options.onClickLink(sanitizeUrl(href), event);
                 }
-              } catch (err) {
+              } catch (_err) {
                 toast.error(this.options.dictionary.openLinkError);
               }
 
@@ -225,15 +227,18 @@ export default class Link extends Mark {
 
             return false;
           },
-          click: (view: EditorView, event: MouseEvent) => {
+          click: (_view: EditorView, event: MouseEvent) => {
             if (
               !(event.target instanceof HTMLAnchorElement) ||
-              event.button !== 0
+              (event.button !== 0 && event.button !== 1)
             ) {
               return false;
             }
 
-            if (event.target.matches(".component-attachment *")) {
+            if (
+              event.target.role === "button" ||
+              event.target.matches(".component-attachment *")
+            ) {
               return false;
             }
 

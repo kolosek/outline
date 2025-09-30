@@ -1,23 +1,26 @@
+import noop from "lodash/noop";
 import { observer } from "mobx-react";
-import * as React from "react";
-import { useDrop } from "react-dnd";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { Waypoint } from "react-waypoint";
 import styled from "styled-components";
 import Collection from "~/models/Collection";
 import Document from "~/models/Document";
 import DocumentsLoader from "~/components/DocumentsLoader";
 import { ResizingHeightContainer } from "~/components/ResizingHeightContainer";
 import Text from "~/components/Text";
-import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
 import history from "~/utils/history";
 import useCollectionDocuments from "../hooks/useCollectionDocuments";
+import { useDropToChangeCollection } from "../hooks/useDragAndDrop";
 import DocumentLink from "./DocumentLink";
 import DropCursor from "./DropCursor";
 import Folder from "./Folder";
 import PlaceholderCollections from "./PlaceholderCollections";
-import SidebarLink, { DragObject } from "./SidebarLink";
+import SidebarLink from "./SidebarLink";
+
+// The number of child documents to initially render
+const DEFAULT_PAGE_SIZE = 50;
 
 type Props = {
   /** The collection to render the children of. */
@@ -33,56 +36,34 @@ function CollectionLinkChildren({
   expanded,
   prefetchDocument,
 }: Props) {
-  const can = usePolicy(collection);
-  const manualSort = collection.sort.field === "index";
+  const pageSize = DEFAULT_PAGE_SIZE;
   const { documents } = useStores();
   const { t } = useTranslation();
   const childDocuments = useCollectionDocuments(collection, documents.active);
+  const [showing, setShowing] = useState(pageSize);
 
-  // Drop to reorder document
-  const [{ isOverReorder, isDraggingAnyDocument }, dropToReorder] = useDrop({
-    accept: "document",
-    drop: (item: DragObject) => {
-      if (!manualSort && item.collectionId === collection?.id) {
-        toast.message(
-          t(
-            "You can't reorder documents in an alphabetically sorted collection"
-          )
-        );
-        return;
-      }
+  useEffect(() => {
+    if (!expanded) {
+      setShowing(pageSize);
+    }
+  }, [expanded]);
 
-      if (!collection) {
-        return;
-      }
-      void documents.move({
-        documentId: item.id,
-        collectionId: collection.id,
-        index: 0,
-      });
-    },
-    collect: (monitor) => ({
-      isOverReorder: !!monitor.isOver(),
-      isDraggingAnyDocument: !!monitor.canDrop(),
-    }),
-  });
+  const showMore = useCallback(() => {
+    if (childDocuments && childDocuments.length > showing) {
+      setShowing((value) => value + pageSize);
+    }
+  }, [childDocuments, showing]);
 
   return (
     <Folder expanded={expanded}>
-      {isDraggingAnyDocument && can.createDocument && manualSort && (
-        <DropCursor
-          isActiveDrop={isOverReorder}
-          innerRef={dropToReorder}
-          position="top"
-        />
-      )}
+      <DynamicDropCursor collection={collection} />
       <DocumentsLoader collection={collection} enabled={expanded}>
         {!childDocuments && (
           <ResizingHeightContainer hideOverflow>
             <Loading />
           </ResizingHeightContainer>
         )}
-        {childDocuments?.map((node, index) => (
+        {childDocuments?.slice(0, showing).map((node, index) => (
           <DocumentLink
             key={node.id}
             node={node}
@@ -105,10 +86,32 @@ function CollectionLinkChildren({
             depth={2}
           />
         )}
+        {childDocuments && (
+          <Waypoint key={showing} onEnter={showMore} fireOnRapidScroll />
+        )}
       </DocumentsLoader>
     </Folder>
   );
 }
+
+const DynamicDropCursor = observer(
+  ({ collection }: { collection: Collection }) => {
+    const dummyRef = useRef<HTMLDivElement>(null);
+    const [{ isOver, canDrop }] = useDropToChangeCollection(
+      collection,
+      noop,
+      dummyRef
+    );
+
+    if (!canDrop || !collection.isManualSort) {
+      return null;
+    }
+
+    return (
+      <DropCursor isActiveDrop={isOver} innerRef={dummyRef} position="top" />
+    );
+  }
+);
 
 const Loading = styled(PlaceholderCollections)`
   margin-left: 44px;

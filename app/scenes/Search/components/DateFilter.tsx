@@ -1,4 +1,4 @@
-import * as React from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { DateFilter as TDateFilter } from "@shared/types";
 import FilterOptions from "~/components/FilterOptions";
@@ -12,11 +12,11 @@ type Props = {
 
 const DateFilter = ({ dateFilter, onSelect }: Props) => {
   const { t } = useTranslation();
-  const options = React.useMemo(
+  const options = useMemo(
     () => [
       {
         key: "",
-        label: t("Any time"),
+        label: t("All time"),
       },
       {
         key: "day",

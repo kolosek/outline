@@ -1,6 +1,5 @@
 import invariant from "invariant";
 import { observer } from "mobx-react";
-import * as React from "react";
 import { actionToMenuItem } from "~/actions";
 import useActionContext from "~/hooks/useActionContext";
 import { Action } from "~/types";
@@ -13,7 +12,7 @@ type Props = {
 
 function SidebarAction({ action, ...rest }: Props) {
   const context = useActionContext({
-    isContextMenu: false,
+    isMenu: false,
     isCommandBar: false,
     activeCollectionId: undefined,
     activeDocumentId: undefined,

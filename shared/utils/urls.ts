@@ -1,5 +1,6 @@
 import escapeRegExp from "lodash/escapeRegExp";
 import env from "../env";
+import { isBrowser } from "./browser";
 import { parseDomain } from "./domains";
 
 /**
@@ -10,6 +11,21 @@ import { parseDomain } from "./domains";
  */
 export function cdnPath(path: string): string {
   return `${env.CDN_URL ?? ""}${path}`;
+}
+
+/**
+ * Extracts the file name from a given url.
+ *
+ * @param url The url to extract the file name from.
+ * @returns The file name.
+ */
+export function fileNameFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.split("/").pop();
+  } catch (_err) {
+    return;
+  }
 }
 
 /**
@@ -29,15 +45,14 @@ export function isInternalUrl(href: string) {
     return true;
   }
 
-  const outline =
-    typeof window !== "undefined"
-      ? parseDomain(window.location.href)
-      : parseDomain(env.URL);
+  const outline = isBrowser
+    ? parseDomain(window.location.href)
+    : parseDomain(env.URL);
   const domain = parseDomain(href);
 
   return (
     (outline.host === domain.host && outline.port === domain.port) ||
-    (typeof window !== "undefined" &&
+    (isBrowser &&
       window.location.hostname === domain.host &&
       window.location.port === domain.port)
   );
@@ -51,12 +66,27 @@ export function isInternalUrl(href: string) {
  */
 export function isDocumentUrl(url: string) {
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(url, env.URL);
     return (
       isInternalUrl(url) &&
       (parsed.pathname.startsWith("/doc/") || parsed.pathname.startsWith("/d/"))
     );
-  } catch (err) {
+  } catch (_err) {
+    return false;
+  }
+}
+
+/**
+ * Returns true if the given string is a link to a collection.
+ *
+ * @param options Parsing options.
+ * @returns True if a collection, false otherwise.
+ */
+export function isCollectionUrl(url: string) {
+  try {
+    const parsed = new URL(url, env.URL);
+    return isInternalUrl(url) && parsed.pathname.startsWith("/collection/");
+  } catch (_err) {
     return false;
   }
 }
@@ -68,7 +98,15 @@ export function isDocumentUrl(url: string) {
  * @param options Parsing options.
  * @returns True if a url, false otherwise.
  */
-export function isUrl(text: string, options?: { requireHostname: boolean }) {
+export function isUrl(
+  text: string,
+  options?: {
+    /** Require the url to have a hostname. */
+    requireHostname?: boolean;
+    /** Require the url not to use HTTP, custom protocols are ok. */
+    requireHttps?: boolean;
+  }
+) {
   if (text.match(/\n/)) {
     return false;
   }
@@ -83,13 +121,16 @@ export function isUrl(text: string, options?: { requireHostname: boolean }) {
     if (url.hostname) {
       return true;
     }
+    if (options?.requireHttps && url.protocol === "http:") {
+      return false;
+    }
 
     return (
       url.protocol !== "" &&
       (url.pathname.startsWith("//") || url.pathname.startsWith("http")) &&
       !options?.requireHostname
     );
-  } catch (err) {
+  } catch (_err) {
     return false;
   }
 }
@@ -106,7 +147,12 @@ export const creatingUrlPrefix = "creating#";
  * @returns True if the url is external, false otherwise.
  */
 export function isExternalUrl(url: string) {
-  return !!url && !isInternalUrl(url) && !url.startsWith(creatingUrlPrefix);
+  return (
+    !!url &&
+    !isInternalUrl(url) &&
+    !url.startsWith(creatingUrlPrefix) &&
+    (!env.CDN_URL || !url.startsWith(env.CDN_URL))
+  );
 }
 
 /**
@@ -146,6 +192,12 @@ export function sanitizeUrl(url: string | null | undefined) {
   return url;
 }
 
+/**
+ * Returns a regex to match the given url.
+ *
+ * @param url The url to create a regex for.
+ * @returns A regex to match the url.
+ */
 export function urlRegex(url: string | null | undefined): RegExp | undefined {
   if (!url || !isUrl(url)) {
     return undefined;

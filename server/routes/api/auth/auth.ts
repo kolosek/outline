@@ -135,7 +135,7 @@ router.post("auth.info", auth(), async (ctx: APIContext<T.AuthInfoReq>) => {
   // If the user did not _just_ sign in then we need to check if they continue
   // to have access to the workspace they are signed into.
   if (user.lastSignedInAt && user.lastSignedInAt < subHours(new Date(), 1)) {
-    await ValidateSSOAccessTask.schedule({ userId: user.id });
+    await new ValidateSSOAccessTask().schedule({ userId: user.id });
   }
 
   ctx.body = {
@@ -169,19 +169,13 @@ router.post(
     const { user } = auth;
 
     await user.rotateJwtSecret({ transaction });
-    await Event.createFromContext(
-      ctx,
-      {
-        name: "users.signout",
-        userId: user.id,
-        data: {
-          name: user.name,
-        },
+    await Event.createFromContext(ctx, {
+      name: "users.signout",
+      userId: user.id,
+      data: {
+        name: user.name,
       },
-      {
-        transaction,
-      }
-    );
+    });
 
     ctx.cookies.set("accessToken", "", {
       sameSite: "lax",

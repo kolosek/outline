@@ -1,12 +1,13 @@
+import Storage from "@shared/utils/Storage";
 import copy from "copy-to-clipboard";
 import {
   BeakerIcon,
   CopyIcon,
+  EditIcon,
   ToolsIcon,
   TrashIcon,
   UserIcon,
 } from "outline-icons";
-import * as React from "react";
 import { toast } from "sonner";
 import { createAction } from "~/actions";
 import { DeveloperSection } from "~/actions/sections";
@@ -83,6 +84,38 @@ export const copyId = createAction({
   },
 });
 
+function generateRandomText() {
+  const characters =
+    "abcdefghijklmno pqrstuvwxyzABCDEFGHIJKL MNOPQRSTUVWXYZ 0123456789\n";
+  let text = "";
+  for (let i = 0; i < Math.floor(Math.random() * 10) + 1; i++) {
+    text += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+  return text;
+}
+
+export const startTyping = createAction({
+  name: "Start automatic typing",
+  icon: <EditIcon />,
+  section: DeveloperSection,
+  visible: ({ activeDocumentId }) =>
+    !!activeDocumentId && env.ENVIRONMENT === "development",
+  perform: () => {
+    const intervalId = setInterval(() => {
+      const text = generateRandomText();
+      document.execCommand("insertText", false, text);
+    }, 250);
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && intervalId) {
+        clearInterval(intervalId);
+      }
+    });
+
+    toast.info("Automatic typing started, press Escape to stop");
+  },
+});
+
 export const clearIndexedDB = createAction({
   name: ({ t }) => t("Clear IndexedDB cache"),
   icon: <TrashIcon />,
@@ -92,6 +125,17 @@ export const clearIndexedDB = createAction({
     history.push(homePath());
     await deleteAllDatabases();
     toast.success(t("IndexedDB cache cleared"));
+  },
+});
+
+export const clearStorage = createAction({
+  name: ({ t }) => t("Clear local storage"),
+  icon: <TrashIcon />,
+  keywords: "cache clear localstorage",
+  section: DeveloperSection,
+  perform: ({ t }) => {
+    Storage.clear();
+    toast.success(t("Local storage cleared"));
   },
 });
 
@@ -169,6 +213,8 @@ export const developer = createAction({
     createToast,
     createTestUsers,
     clearIndexedDB,
+    clearStorage,
+    startTyping,
   ],
 });
 

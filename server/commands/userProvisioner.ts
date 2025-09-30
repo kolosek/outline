@@ -1,15 +1,16 @@
-import { InferCreationAttributes } from "sequelize";
+import { InferCreationAttributes, Op } from "sequelize";
 import { UserRole } from "@shared/types";
-import { parseEmail } from "@shared/utils/email";
 import InviteAcceptedEmail from "@server/emails/templates/InviteAcceptedEmail";
 import {
   DomainNotAllowedError,
+  InternalError,
   InvalidAuthenticationError,
   InviteRequiredError,
 } from "@server/errors";
 import Logger from "@server/logging/Logger";
-import { Event, Team, User, UserAuthentication } from "@server/models";
+import { Team, User, UserAuthentication } from "@server/models";
 import { sequelize } from "@server/storage/database";
+import { APIContext } from "@server/types";
 
 type UserProvisionerResult = {
   user: User;
@@ -33,8 +34,6 @@ type Props = {
    * subdomain that the request came from, if any.
    */
   teamId: string;
-  /** The IP address of the incoming request */
-  ip: string;
   /** Bundle of props related to the current external provider authentication */
   authentication?: {
     authenticationProviderId: string;
@@ -51,20 +50,14 @@ type Props = {
   };
 };
 
-export default async function userProvisioner({
-  name,
-  email,
-  role,
-  language,
-  avatarUrl,
-  teamId,
-  authentication,
-  ip,
-}: Props): Promise<UserProvisionerResult> {
+export default async function userProvisioner(
+  ctx: APIContext,
+  { name, email, role, language, avatarUrl, teamId, authentication }: Props
+): Promise<UserProvisionerResult> {
   const auth = authentication
     ? await UserAuthentication.findOne({
         where: {
-          providerId: "" + authentication.providerId,
+          providerId: String(authentication.providerId),
         },
         include: [
           {
@@ -88,7 +81,7 @@ export default async function userProvisioner({
     // hosted google domain). This is possible in Google Auth when moving domains.
     // In the future we may auto-migrate these.
     if (auth.authenticationProviderId !== authenticationProviderId) {
-      throw new Error(
+      throw InternalError(
         `User authentication ${providerId} already exists for ${auth.authenticationProviderId}, tried to assign to ${authenticationProviderId}`
       );
     }
@@ -118,9 +111,10 @@ export default async function userProvisioner({
     "withTeam",
   ]).findOne({
     where: {
-      // Email from auth providers may be capitalized and we should respect that
-      // however any existing invites will always be lowercased.
-      email: email.toLowerCase(),
+      // Email from auth providers may be capitalized
+      email: {
+        [Op.iLike]: email,
+      },
       teamId,
     },
   });
@@ -137,25 +131,7 @@ export default async function userProvisioner({
     // that's never been active before.
     const isInvite = existingUser.isInvited;
 
-    const auth = await sequelize.transaction(async (transaction) => {
-      if (isInvite) {
-        await Event.create(
-          {
-            name: "users.create",
-            actorId: existingUser.id,
-            userId: existingUser.id,
-            teamId: existingUser.teamId,
-            data: {
-              name,
-            },
-            ip,
-          },
-          {
-            transaction,
-          }
-        );
-      }
-
+    const userAuth = await sequelize.transaction(async (transaction) => {
       // Regardless, create a new authentication record
       // against the existing user (user can auth with multiple SSO providers)
       // Update user's name and avatar based on the most recently added provider
@@ -164,7 +140,7 @@ export default async function userProvisioner({
           name,
           avatarUrl,
           lastActiveAt: new Date(),
-          lastActiveIp: ip,
+          lastActiveIp: ctx.ip,
         },
         {
           transaction,
@@ -199,13 +175,15 @@ export default async function userProvisioner({
 
     return {
       user: existingUser,
-      authentication: auth,
+      authentication: userAuth,
       isNewUser: isInvite,
     };
   } else if (!authentication && !team?.allowedDomains.length) {
     // There's no existing invite or user that matches the external auth email
     // and there is no possibility of matching an allowed domain.
-    throw InvalidAuthenticationError();
+    throw InvalidAuthenticationError(
+      "No matching user for email or allowed domain"
+    );
   }
 
   //
@@ -227,12 +205,12 @@ export default async function userProvisioner({
 
     // If the team settings do not allow this domain,
     // throw an error and fail user creation.
-    const { domain } = parseEmail(email);
-    if (team && !(await team.isDomainAllowed(domain))) {
+    if (team && !(await team.isDomainAllowed(email))) {
       throw DomainNotAllowedError();
     }
 
-    const user = await User.create(
+    const user = await User.createWithCtx(
+      ctx,
       {
         name,
         email,
@@ -241,25 +219,12 @@ export default async function userProvisioner({
         teamId,
         avatarUrl,
         authentications: authentication ? [authentication] : [],
+        lastActiveAt: new Date(),
+        lastActiveIp: ctx.ip,
       } as Partial<InferCreationAttributes<User>>,
+      undefined,
       {
         include: "authentications",
-        transaction,
-      }
-    );
-    await Event.create(
-      {
-        name: "users.create",
-        actorId: user.id,
-        userId: user.id,
-        teamId: user.teamId,
-        data: {
-          name: user.name,
-        },
-        ip,
-      },
-      {
-        transaction,
       }
     );
     await transaction.commit();

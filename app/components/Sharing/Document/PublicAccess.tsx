@@ -1,13 +1,13 @@
-import invariant from "invariant";
 import debounce from "lodash/debounce";
 import isEmpty from "lodash/isEmpty";
 import { observer } from "mobx-react";
-import { CopyIcon, GlobeIcon, InfoIcon } from "outline-icons";
+import { CopyIcon, GlobeIcon, InfoIcon, QuestionMarkIcon } from "outline-icons";
 import * as React from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import styled, { useTheme } from "styled-components";
+import Flex from "@shared/components/Flex";
 import Squircle from "@shared/components/Squircle";
 import { s } from "@shared/styles";
 import { UrlHelper } from "@shared/utils/UrlHelper";
@@ -17,7 +17,6 @@ import Input, { NativeInput } from "~/components/Input";
 import Switch from "~/components/Switch";
 import env from "~/env";
 import usePolicy from "~/hooks/usePolicy";
-import useStores from "~/hooks/useStores";
 import { AvatarSize } from "../../Avatar";
 import CopyToClipboard from "../../CopyToClipboard";
 import NudeButton from "../../NudeButton";
@@ -39,7 +38,6 @@ type Props = {
 };
 
 function PublicAccess({ document, share, sharedParent }: Props) {
-  const { shares } = useStores();
   const { t } = useTranslation();
   const theme = useTheme();
   const [validationError, setValidationError] = React.useState("");
@@ -53,20 +51,43 @@ function PublicAccess({ document, share, sharedParent }: Props) {
     setUrlId(share?.urlId);
   }, [share?.urlId]);
 
-  const handlePublishedChange = React.useCallback(
-    async (event) => {
-      const share = shares.getByDocumentId(document.id);
-      invariant(share, "Share must exist");
-
+  const handleIndexingChanged = React.useCallback(
+    async (checked: boolean) => {
       try {
-        await share.save({
-          published: event.currentTarget.checked,
+        await share?.save({
+          allowIndexing: checked,
         });
       } catch (err) {
         toast.error(err.message);
       }
     },
-    [document.id, shares]
+    [share]
+  );
+
+  const handleShowLastModifiedChanged = React.useCallback(
+    async (checked: boolean) => {
+      try {
+        await share?.save({
+          showLastUpdated: checked,
+        });
+      } catch (err) {
+        toast.error(err.message);
+      }
+    },
+    [share]
+  );
+
+  const handlePublishedChange = React.useCallback(
+    async (checked: boolean) => {
+      try {
+        await share?.save({
+          published: checked,
+        });
+      } catch (err) {
+        toast.error(err.message);
+      }
+    },
+    [share]
   );
 
   const handleUrlChange = React.useMemo(
@@ -104,14 +125,12 @@ function PublicAccess({ document, share, sharedParent }: Props) {
     toast.success(t("Public link copied to clipboard"));
   }, [t]);
 
-  const documentTitle = sharedParent?.documentTitle;
-
   const shareUrl = sharedParent?.url
     ? `${sharedParent.url}${document.url}`
-    : share?.url ?? "";
+    : (share?.url ?? "");
 
   const copyButton = (
-    <Tooltip content={t("Copy public link")} delay={500} placement="top">
+    <Tooltip content={t("Copy public link")} placement="top">
       <CopyToClipboard text={shareUrl} onCopy={handleCopied}>
         <NudeButton type="button" disabled={!share} style={{ marginRight: 3 }}>
           <CopyIcon color={theme.placeholder} size={18} />
@@ -127,13 +146,24 @@ function PublicAccess({ document, share, sharedParent }: Props) {
         subtitle={
           <>
             {sharedParent && !document.isDraft ? (
-              <Trans>
-                Anyone with the link can access because the parent document,{" "}
-                <StyledLink to={`/doc/${sharedParent.documentId}`}>
-                  {{ documentTitle }}
-                </StyledLink>
-                , is shared
-              </Trans>
+              sharedParent.collectionId ? (
+                <Trans>
+                  Anyone with the link can access because the containing
+                  collection,{" "}
+                  <StyledLink to={`/collection/${sharedParent.collectionId}`}>
+                    {sharedParent.sourceTitle}
+                  </StyledLink>
+                  , is shared
+                </Trans>
+              ) : (
+                <Trans>
+                  Anyone with the link can access because the parent document,{" "}
+                  <StyledLink to={`/doc/${sharedParent.documentId}`}>
+                    {sharedParent.sourceTitle}
+                  </StyledLink>
+                  , is shared
+                </Trans>
+              )
             ) : (
               t("Allow anyone with the link to access")
             )}
@@ -159,6 +189,61 @@ function PublicAccess({ document, share, sharedParent }: Props) {
       />
 
       <ResizingHeightContainer>
+        {share?.published && !sharedParent?.published && (
+          <>
+            <ListItem
+              title={
+                <Text type="tertiary" as={Flex}>
+                  {t("Search engine indexing")}&nbsp;
+                  <Tooltip
+                    content={t(
+                      "Disable this setting to discourage search engines from indexing the page"
+                    )}
+                  >
+                    <NudeButton size={18}>
+                      <QuestionMarkIcon size={18} />
+                    </NudeButton>
+                  </Tooltip>
+                </Text>
+              }
+              actions={
+                <Switch
+                  aria-label={t("Search engine indexing")}
+                  checked={share?.allowIndexing ?? false}
+                  onChange={handleIndexingChanged}
+                  width={26}
+                  height={14}
+                />
+              }
+            />
+            <ListItem
+              title={
+                <Text type="tertiary" as={Flex}>
+                  {t("Show last modified")}&nbsp;
+                  <Tooltip
+                    content={t(
+                      "Display the last modified timestamp on the shared page"
+                    )}
+                  >
+                    <NudeButton size={18}>
+                      <QuestionMarkIcon size={18} />
+                    </NudeButton>
+                  </Tooltip>
+                </Text>
+              }
+              actions={
+                <Switch
+                  aria-label={t("Show last modified")}
+                  checked={share?.showLastUpdated ?? false}
+                  onChange={handleShowLastModifiedChanged}
+                  width={26}
+                  height={14}
+                />
+              }
+            />
+          </>
+        )}
+
         {sharedParent?.published ? (
           <ShareLinkInput type="text" disabled defaultValue={shareUrl}>
             {copyButton}

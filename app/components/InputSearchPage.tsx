@@ -4,9 +4,9 @@ import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { useHistory } from "react-router-dom";
 import styled, { useTheme } from "styled-components";
+import { isModKey } from "@shared/utils/keyboard";
 import useBoolean from "~/hooks/useBoolean";
 import useKeyDown from "~/hooks/useKeyDown";
-import { isModKey } from "~/utils/keyboard";
 import { searchPath } from "~/utils/routeHelpers";
 import Input, { Outline } from "./Input";
 
@@ -60,7 +60,8 @@ function InputSearchPage({
       if (ev.key === "Enter") {
         ev.preventDefault();
         history.push(
-          searchPath(ev.currentTarget.value, {
+          searchPath({
+            query: ev.currentTarget.value,
             collectionId,
             ref: source,
           })

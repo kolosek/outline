@@ -4,6 +4,7 @@ import { User } from "@server/models";
 
 type Options = {
   includeDetails?: boolean;
+  includeEmail?: boolean;
 };
 
 type UserPresentation = {
@@ -12,6 +13,7 @@ type UserPresentation = {
   avatarUrl: string | null | undefined;
   createdAt: Date;
   updatedAt: Date;
+  deletedAt: Date | null;
   lastActiveAt: Date | null;
   color: string;
   role: UserRole;
@@ -20,6 +22,7 @@ type UserPresentation = {
   language?: string;
   preferences?: UserPreferences | null;
   notificationSettings?: NotificationSettings;
+  timezone?: string | null;
 };
 
 export default function presentUser(
@@ -35,7 +38,9 @@ export default function presentUser(
     isSuspended: user.isSuspended,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
+    deletedAt: user.deletedAt,
     lastActiveAt: user.lastActiveAt,
+    timezone: user.timezone,
   };
 
   if (options.includeDetails) {
@@ -43,6 +48,10 @@ export default function presentUser(
     userData.language = user.language || env.DEFAULT_LANGUAGE;
     userData.preferences = user.preferences;
     userData.notificationSettings = user.notificationSettings;
+  }
+
+  if (options.includeEmail) {
+    userData.email = user.email;
   }
 
   return userData;

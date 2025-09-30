@@ -3,13 +3,11 @@ import { MarkAsReadIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
-import { s } from "@shared/styles";
+import { s, hover } from "@shared/styles";
 import Notification from "~/models/Notification";
 import { markNotificationsAsRead } from "~/actions/definitions/notifications";
-import useActionContext from "~/hooks/useActionContext";
 import useStores from "~/hooks/useStores";
 import NotificationMenu from "~/menus/NotificationMenu";
-import { hover } from "~/styles";
 import Desktop from "~/utils/Desktop";
 import Empty from "../Empty";
 import ErrorBoundary from "../ErrorBoundary";
@@ -33,10 +31,9 @@ function Notifications(
   { onRequestClose }: Props,
   ref: React.RefObject<HTMLDivElement>
 ) {
-  const context = useActionContext();
   const { notifications } = useStores();
   const { t } = useTranslation();
-  const isEmpty = notifications.orderedData.length === 0;
+  const isEmpty = notifications.active.length === 0;
 
   // Update the notification count in the dock icon, if possible.
   React.useEffect(() => {
@@ -46,6 +43,15 @@ function Notifications(
       void Desktop.bridge.setNotificationCount(
         notifications.approximateUnreadCount
       );
+    }
+
+    // PWA badging
+    if ("setAppBadge" in navigator) {
+      if (notifications.approximateUnreadCount) {
+        void navigator.setAppBadge(notifications.approximateUnreadCount);
+      } else {
+        void navigator.clearAppBadge();
+      }
     }
   }, [notifications.approximateUnreadCount]);
 
@@ -58,8 +64,11 @@ function Notifications(
           </Text>
           <Flex gap={8}>
             {notifications.approximateUnreadCount > 0 && (
-              <Tooltip delay={500} content={t("Mark all as read")}>
-                <Button action={markNotificationsAsRead} context={context}>
+              <Tooltip content={t("Mark all as read")}>
+                <Button
+                  action={markNotificationsAsRead}
+                  aria-label={t("Mark all as read")}
+                >
                   <MarkAsReadIcon />
                 </Button>
               </Tooltip>
@@ -69,11 +78,11 @@ function Notifications(
         </Header>
         <React.Suspense fallback={null}>
           <Scrollable ref={ref} flex topShadow>
-            <PaginatedList
+            <PaginatedList<Notification>
               fetch={notifications.fetchPage}
               options={{ archived: false }}
-              items={notifications.orderedData}
-              renderItem={(item: Notification) => (
+              items={notifications.active}
+              renderItem={(item) => (
                 <NotificationListItem
                   key={item.id}
                   notification={item}

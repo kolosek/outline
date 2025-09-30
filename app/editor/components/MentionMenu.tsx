@@ -1,27 +1,32 @@
+import { isEmail } from "class-validator";
 import { observer } from "mobx-react";
-import * as React from "react";
+import { DocumentIcon, PlusIcon, CollectionIcon } from "outline-icons";
+import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { v4 } from "uuid";
+import Icon from "@shared/components/Icon";
 import { MenuItem } from "@shared/editor/types";
 import { MentionType } from "@shared/types";
 import parseDocumentSlug from "@shared/utils/parseDocumentSlug";
-import User from "~/models/User";
 import { Avatar, AvatarSize } from "~/components/Avatar";
+import DocumentBreadcrumb from "~/components/DocumentBreadcrumb";
 import Flex from "~/components/Flex";
+import {
+  DocumentsSection,
+  UserSection,
+  CollectionsSection,
+} from "~/actions/sections";
 import useRequest from "~/hooks/useRequest";
 import useStores from "~/hooks/useStores";
 import { client } from "~/utils/ApiClient";
-import MentionMenuItem from "./MentionMenuItem";
 import SuggestionsMenu, {
   Props as SuggestionsMenuProps,
 } from "./SuggestionsMenu";
+import SuggestionsMenuItem from "./SuggestionsMenuItem";
 
 interface MentionItem extends MenuItem {
-  name: string;
-  user: User;
-  appendSpace: boolean;
   attrs: {
     id: string;
     type: MentionType;
@@ -33,55 +38,165 @@ interface MentionItem extends MenuItem {
 
 type Props = Omit<
   SuggestionsMenuProps<MentionItem>,
-  "renderMenuItem" | "items" | "embeds" | "trigger"
+  "renderMenuItem" | "items" | "embeds"
 >;
 
 function MentionMenu({ search, isActive, ...rest }: Props) {
-  const [loaded, setLoaded] = React.useState(false);
-  const [items, setItems] = React.useState<MentionItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [items, setItems] = useState<MentionItem[]>([]);
   const { t } = useTranslation();
-  const { auth, users } = useStores();
+  const { auth, documents, users, collections } = useStores();
+  const actorId = auth.currentUserId;
   const location = useLocation();
   const documentId = parseDocumentSlug(location.pathname);
-  const { data, loading, request } = useRequest(
-    React.useCallback(
-      () =>
-        documentId
-          ? users.fetchPage({ id: documentId, query: search })
-          : Promise.resolve([]),
-      [users, documentId, search]
-    )
+  const maxResultsInSection = search ? 25 : 5;
+
+  const { loading, request } = useRequest(
+    useCallback(async () => {
+      const res = await client.post("/suggestions.mention", { query: search });
+
+      res.data.documents.map(documents.add);
+      res.data.users.map(users.add);
+      res.data.collections.map(collections.add);
+    }, [search, documents, users, collections])
   );
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (isActive) {
       void request();
     }
   }, [request, isActive]);
 
-  React.useEffect(() => {
-    if (data && !loading) {
-      const items = data.map((user) => ({
-        name: "mention",
-        user,
-        title: user.name,
-        appendSpace: true,
-        attrs: {
-          id: v4(),
-          type: MentionType.User,
-          modelId: user.id,
-          actorId: auth.currentUserId ?? undefined,
-          label: user.name,
-        },
-      }));
+  useEffect(() => {
+    if (actorId && !loading) {
+      const items: MentionItem[] = users
+        .findByQuery(search, { maxResults: maxResultsInSection })
+        .map(
+          (user) =>
+            ({
+              name: "mention",
+              icon: (
+                <Flex
+                  align="center"
+                  justify="center"
+                  style={{ width: 24, height: 24 }}
+                >
+                  <Avatar
+                    model={user}
+                    alt={t("Profile picture")}
+                    size={AvatarSize.Small}
+                  />
+                </Flex>
+              ),
+              title: user.name,
+              section: UserSection,
+              appendSpace: true,
+              attrs: {
+                id: v4(),
+                type: MentionType.User,
+                modelId: user.id,
+                actorId,
+                label: user.name,
+              },
+            }) as MentionItem
+        )
+        .concat(
+          documents
+            .findByQuery(search, { maxResults: maxResultsInSection })
+            .map(
+              (doc) =>
+                ({
+                  name: "mention",
+                  icon: doc.icon ? (
+                    <Icon value={doc.icon} color={doc.color ?? undefined} />
+                  ) : (
+                    <DocumentIcon />
+                  ),
+                  title: doc.title,
+                  subtitle: (
+                    <DocumentBreadcrumb
+                      document={doc}
+                      onlyText
+                      reverse
+                      maxDepth={2}
+                    />
+                  ),
+                  section: DocumentsSection,
+                  appendSpace: true,
+                  attrs: {
+                    id: v4(),
+                    type: MentionType.Document,
+                    modelId: doc.id,
+                    actorId,
+                    label: doc.title,
+                  },
+                }) as MentionItem
+            )
+        )
+        .concat(
+          collections
+            .findByQuery(search, { maxResults: maxResultsInSection })
+            .map(
+              (collection) =>
+                ({
+                  name: "mention",
+                  icon: collection.icon ? (
+                    <Icon
+                      value={collection.icon}
+                      color={collection.color ?? undefined}
+                    />
+                  ) : (
+                    <CollectionIcon />
+                  ),
+                  title: collection.name,
+                  section: CollectionsSection,
+                  appendSpace: true,
+                  attrs: {
+                    id: v4(),
+                    type: MentionType.Collection,
+                    modelId: collection.id,
+                    actorId,
+                    label: collection.name,
+                  },
+                }) as MentionItem
+            )
+        )
+        .concat([
+          {
+            name: "link",
+            icon: <PlusIcon />,
+            title: search?.trim(),
+            section: DocumentsSection,
+            subtitle: t("Create a new doc"),
+            visible: !!search && !isEmail(search),
+            priority: -1,
+            appendSpace: true,
+            attrs: {
+              id: v4(),
+              type: MentionType.Document,
+              modelId: v4(),
+              actorId,
+              label: search,
+            },
+          } as MentionItem,
+        ]);
 
       setItems(items);
       setLoaded(true);
     }
-  }, [auth.currentUserId, loading, data]);
+  }, [t, actorId, loading, search, users, documents, maxResultsInSection]);
 
-  const handleSelect = React.useCallback(
+  const handleSelect = useCallback(
     async (item: MentionItem) => {
+      if (
+        item.attrs.type === MentionType.Document ||
+        item.attrs.type === MentionType.Collection
+      ) {
+        return;
+      }
+      if (!documentId) {
+        return;
+      }
       // Check if the mentioned user has access to the document
       const res = await client.post("/documents.users", {
         id: documentId,
@@ -92,7 +207,7 @@ function MentionMenu({ search, isActive, ...rest }: Props) {
         const user = users.get(item.attrs.modelId);
         toast.message(
           t(
-            "{{ userName }} won't by notified as they do not have access to this document",
+            "{{ userName }} won't be notified, as they do not have access to this document",
             {
               userName: item.attrs.label,
             }
@@ -118,29 +233,15 @@ function MentionMenu({ search, isActive, ...rest }: Props) {
       {...rest}
       isActive={isActive}
       filterable={false}
-      trigger="@"
       search={search}
       onSelect={handleSelect}
       renderMenuItem={(item, _index, options) => (
-        <MentionMenuItem
+        <SuggestionsMenuItem
           onClick={options.onClick}
           selected={options.selected}
+          subtitle={item.subtitle}
           title={item.title}
-          label={item.attrs.label}
-          icon={
-            <Flex
-              align="center"
-              justify="center"
-              style={{ width: 24, height: 24 }}
-            >
-              <Avatar
-                model={item.user}
-                showBorder={false}
-                alt={t("Profile picture")}
-                size={AvatarSize.Small}
-              />
-            </Flex>
-          }
+          icon={item.icon}
         />
       )}
       items={items}

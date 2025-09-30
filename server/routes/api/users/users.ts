@@ -2,11 +2,10 @@ import Router from "koa-router";
 import { Op, Sequelize, WhereOptions } from "sequelize";
 import { UserPreference, UserRole } from "@shared/types";
 import { UserRoleHelper } from "@shared/utils/UserRoleHelper";
+import { settingsPath } from "@shared/utils/routeHelpers";
 import { UserValidation } from "@shared/validations";
-import userDestroyer from "@server/commands/userDestroyer";
 import userInviter from "@server/commands/userInviter";
-import userSuspender from "@server/commands/userSuspender";
-import userUnsuspender from "@server/commands/userUnsuspender";
+import ConfirmUpdateEmail from "@server/emails/templates/ConfirmUpdateEmail";
 import ConfirmUserDeleteEmail from "@server/emails/templates/ConfirmUserDeleteEmail";
 import InviteEmail from "@server/emails/templates/InviteEmail";
 import env from "@server/env";
@@ -16,18 +15,18 @@ import auth from "@server/middlewares/authentication";
 import { rateLimiter } from "@server/middlewares/rateLimiter";
 import { transaction } from "@server/middlewares/transaction";
 import validate from "@server/middlewares/validate";
-import { Event, User, Team } from "@server/models";
+import { User, Team } from "@server/models";
 import { UserFlag } from "@server/models/User";
 import { can, authorize } from "@server/policies";
 import { presentUser, presentPolicies } from "@server/presenters";
 import { APIContext } from "@server/types";
 import { RateLimiterStrategy } from "@server/utils/RateLimiter";
 import { safeEqual } from "@server/utils/crypto";
+import { getDetailsForEmailUpdateToken } from "@server/utils/jwt";
 import pagination from "../middlewares/pagination";
 import * as T from "./schema";
 
 const router = new Router();
-const emailEnabled = !!(env.SMTP_HOST || env.isDevelopment);
 
 router.post(
   "users.list",
@@ -124,11 +123,16 @@ router.post(
     if (query) {
       where = {
         ...where,
-        [Op.and]: [
-          Sequelize.literal(
-            `unaccent(LOWER(name)) like unaccent(LOWER(:query))`
-          ),
-        ],
+        [Op.and]: {
+          [Op.or]: [
+            Sequelize.literal(
+              `unaccent(LOWER(email)) like unaccent(LOWER(:query))`
+            ),
+            Sequelize.literal(
+              `unaccent(LOWER(name)) like unaccent(LOWER(:query))`
+            ),
+          ],
+        },
       };
     }
 
@@ -167,6 +171,7 @@ router.post(
       pagination: { ...ctx.state.pagination, total },
       data: users.map((user) =>
         presentUser(user, {
+          includeEmail: !!can(actor, "readEmail", user),
           includeDetails: !!can(actor, "readDetails", user),
         })
       ),
@@ -196,6 +201,100 @@ router.post(
 );
 
 router.post(
+  "users.updateEmail",
+  rateLimiter(RateLimiterStrategy.TenPerHour),
+  auth(),
+  validate(T.UsersUpdateEmailSchema),
+  async (ctx: APIContext<T.UsersUpdateEmailReq>) => {
+    if (!env.EMAIL_ENABLED) {
+      throw ValidationError("Email support is not setup for this instance");
+    }
+
+    const { user: actor } = ctx.state.auth;
+    const { id } = ctx.input.body;
+    const { team } = actor;
+    const user = id ? await User.findByPk(id) : actor;
+    const email = ctx.input.body.email.trim().toLowerCase();
+
+    authorize(actor, "update", user);
+
+    // Check if email domain is allowed
+    if (!(await team.isDomainAllowed(email))) {
+      throw ValidationError("The domain is not allowed for this workspace");
+    }
+
+    // Check if email already exists in workspace
+    if (await User.findByEmail(ctx, email)) {
+      throw ValidationError("User with email already exists");
+    }
+
+    await new ConfirmUpdateEmail({
+      to: email,
+      previous: user.email,
+      code: user.getEmailUpdateToken(email),
+      teamUrl: team.url,
+    }).schedule();
+
+    ctx.body = {
+      success: true,
+    };
+  }
+);
+
+router.get(
+  "users.updateEmail",
+  rateLimiter(RateLimiterStrategy.TenPerHour),
+  auth(),
+  transaction(),
+  validate(T.UsersUpdateEmailConfirmSchema),
+  async (ctx: APIContext<T.UsersUpdateEmailConfirmReq>) => {
+    if (!env.EMAIL_ENABLED) {
+      throw ValidationError("Email support is not setup for this instance");
+    }
+
+    const { transaction } = ctx.state;
+    const { code, follow } = ctx.input.query;
+
+    // The link in the email does not include the follow query param, this
+    // is to help prevent anti-virus, and email clients from pre-fetching the link
+    if (!follow) {
+      return ctx.redirectOnClient(ctx.request.href + "&follow=true");
+    }
+    let user: User;
+    let email: string;
+
+    try {
+      const res = await getDetailsForEmailUpdateToken(code as string, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      user = res.user;
+      email = res.email;
+    } catch (_err) {
+      ctx.redirect(`/?notice=expired-token`);
+      return;
+    }
+
+    const { user: actor } = ctx.state.auth;
+    authorize(actor, "update", user);
+
+    // Check if email domain is allowed
+    if (!(await actor.team.isDomainAllowed(email))) {
+      throw ValidationError("The domain is not allowed for this workspace");
+    }
+
+    // Check if email already exists in workspace
+    if (await User.findByEmail(ctx, email)) {
+      throw ValidationError("User with email already exists");
+    }
+
+    await user.updateWithCtx(ctx, { email });
+
+    ctx.redirect(settingsPath());
+  }
+);
+
+router.post(
   "users.update",
   auth(),
   validate(T.UsersUpdateSchema),
@@ -203,7 +302,8 @@ router.post(
   async (ctx: APIContext<T.UsersUpdateReq>) => {
     const { auth, transaction } = ctx.state;
     const actor = auth.user;
-    const { id, name, avatarUrl, language, preferences } = ctx.input.body;
+    const { id, name, avatarUrl, language, preferences, timezone } =
+      ctx.input.body;
 
     let user: User | null = actor;
     if (id) {
@@ -230,17 +330,11 @@ router.post(
         user.setPreference(key, preferences[key] as boolean);
       }
     }
+    if (timezone) {
+      user.timezone = timezone;
+    }
 
-    await Event.createFromContext(
-      ctx,
-      {
-        name: "users.update",
-        userId: user.id,
-        changes: user.changeset,
-      },
-      { transaction }
-    );
-    await user.save({ transaction });
+    await user.saveWithCtx(ctx);
 
     ctx.body = {
       data: presentUser(user, {
@@ -332,31 +426,15 @@ async function updateRole(ctx: APIContext<T.UsersChangeRoleReq>) {
   }
 
   if (UserRoleHelper.canDemote(user, role)) {
-    name = "users.demote";
+    name = "demote";
     authorize(actor, "demote", user);
   }
   if (UserRoleHelper.canPromote(user, role)) {
-    name = "users.promote";
+    name = "promote";
     authorize(actor, "promote", user);
   }
 
-  await user.update({ role }, { transaction });
-
-  await Event.createFromContext(
-    ctx,
-    {
-      name,
-      userId,
-      data: {
-        name: user.name,
-        role,
-      },
-    },
-    {
-      transaction,
-    }
-  );
-
+  await user.updateWithCtx(ctx, { role }, { name });
   const includeDetails = !!can(actor, "readDetails", user);
 
   ctx.body = {
@@ -383,12 +461,16 @@ router.post(
     });
     authorize(actor, "suspend", user);
 
-    await userSuspender({
-      user,
-      actorId: actor.id,
-      ip: ctx.request.ip,
-      transaction,
-    });
+    await user.updateWithCtx(
+      ctx,
+      {
+        suspendedById: actor.id,
+        suspendedAt: new Date(),
+      },
+      {
+        name: "suspend",
+      }
+    );
     const includeDetails = !!can(actor, "readDetails", user);
 
     ctx.body = {
@@ -416,12 +498,16 @@ router.post(
     });
     authorize(actor, "activate", user);
 
-    await userUnsuspender({
-      user,
-      actorId: actor.id,
-      transaction,
-      ip: ctx.request.ip,
-    });
+    await user.updateWithCtx(
+      ctx,
+      {
+        suspendedById: null,
+        suspendedAt: null,
+      },
+      {
+        name: "activate",
+      }
+    );
     const includeDetails = !!can(actor, "readDetails", user);
 
     ctx.body = {
@@ -438,29 +524,26 @@ router.post(
   rateLimiter(RateLimiterStrategy.TenPerHour),
   auth(),
   validate(T.UsersInviteSchema),
+  transaction(),
   async (ctx: APIContext<T.UsersInviteReq>) => {
     const { invites } = ctx.input.body;
+    const { user } = ctx.state.auth;
 
     if (invites.length > UserValidation.maxInvitesPerRequest) {
       throw ValidationError(
         `You can only invite up to ${UserValidation.maxInvitesPerRequest} users at a time`
       );
     }
+    authorize(user, "inviteUser", user.team);
 
-    const { user } = ctx.state.auth;
-    const team = await Team.findByPk(user.teamId);
-    authorize(user, "inviteUser", team);
-
-    const response = await userInviter({
-      user,
-      invites,
-      ip: ctx.request.ip,
-    });
+    const response = await userInviter(ctx, { invites });
 
     ctx.body = {
       data: {
         sent: response.sent,
-        users: response.users.map((user) => presentUser(user)),
+        users: response.users.map((user) =>
+          presentUser(user, { includeEmail: !!can(user, "readEmail", user) })
+        ),
       },
     };
   }
@@ -518,15 +601,19 @@ router.post(
   rateLimiter(RateLimiterStrategy.FivePerHour),
   auth(),
   async (ctx: APIContext) => {
+    if (!env.EMAIL_ENABLED) {
+      throw ValidationError("Email support is not setup for this instance");
+    }
+
     const { user } = ctx.state.auth;
     authorize(user, "delete", user);
 
-    if (emailEnabled) {
-      await new ConfirmUserDeleteEmail({
-        to: user.email,
-        deleteConfirmationCode: user.deleteConfirmationCode,
-      }).schedule();
-    }
+    await new ConfirmUserDeleteEmail({
+      to: user.email,
+      deleteConfirmationCode: user.deleteConfirmationCode,
+      teamName: user.team.name,
+      teamUrl: user.team.url,
+    }).schedule();
 
     ctx.body = {
       success: true,
@@ -559,7 +646,7 @@ router.post(
 
     // If we're attempting to delete our own account then a confirmation code
     // is required. This acts as CSRF protection.
-    if ((!id || id === actor.id) && emailEnabled) {
+    if ((!id || id === actor.id) && env.EMAIL_ENABLED) {
       const deleteConfirmationCode = user.deleteConfirmationCode;
 
       if (!safeEqual(code, deleteConfirmationCode)) {
@@ -567,12 +654,7 @@ router.post(
       }
     }
 
-    await userDestroyer({
-      user,
-      actor,
-      ip: ctx.request.ip,
-      transaction,
-    });
+    await user.destroyWithCtx(ctx);
 
     ctx.body = {
       success: true,
@@ -587,20 +669,10 @@ router.post(
   transaction(),
   async (ctx: APIContext<T.UsersNotificationsSubscribeReq>) => {
     const { eventType } = ctx.input.body;
-    const { transaction } = ctx.state;
     const { user } = ctx.state.auth;
     user.setNotificationEventType(eventType, true);
 
-    await Event.createFromContext(
-      ctx,
-      {
-        name: "users.update",
-        userId: user.id,
-        changes: user.changeset,
-      },
-      { transaction }
-    );
-    await user.save({ transaction });
+    await user.saveWithCtx(ctx);
 
     ctx.body = {
       data: presentUser(user, { includeDetails: true }),
@@ -615,20 +687,10 @@ router.post(
   transaction(),
   async (ctx: APIContext<T.UsersNotificationsUnsubscribeReq>) => {
     const { eventType } = ctx.input.body;
-    const { transaction } = ctx.state;
     const { user } = ctx.state.auth;
     user.setNotificationEventType(eventType, false);
 
-    await Event.createFromContext(
-      ctx,
-      {
-        name: "users.update",
-        userId: user.id,
-        changes: user.changeset,
-      },
-      { transaction }
-    );
-    await user.save({ transaction });
+    await user.saveWithCtx(ctx);
 
     ctx.body = {
       data: presentUser(user, { includeDetails: true }),

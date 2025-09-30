@@ -6,6 +6,7 @@ import * as React from "react";
 import { mergeRefs } from "react-merge-refs";
 import styled, { css } from "styled-components";
 import breakpoint from "styled-components-breakpoint";
+import Icon, { IconTitleWrapper } from "@shared/components/Icon";
 import isMarkdown from "@shared/editor/lib/isMarkdown";
 import normalizePastedMarkdown from "@shared/editor/lib/markdown/normalize";
 import { extraArea, s } from "@shared/styles";
@@ -15,14 +16,14 @@ import {
   getCurrentDateTimeAsString,
   getCurrentTimeAsString,
 } from "@shared/utils/date";
+import { isModKey } from "@shared/utils/keyboard";
 import { DocumentValidation } from "@shared/validations";
 import ContentEditable, { RefHandle } from "~/components/ContentEditable";
 import { useDocumentContext } from "~/components/DocumentContext";
-import Icon, { IconTitleWrapper } from "~/components/Icon";
 import { PopoverButton } from "~/components/IconPicker/components/PopoverButton";
 import useBoolean from "~/hooks/useBoolean";
 import usePolicy from "~/hooks/usePolicy";
-import { isModKey } from "~/utils/keyboard";
+import { useTranslation } from "react-i18next";
 
 const IconPicker = React.lazy(() => import("~/components/IconPicker"));
 
@@ -70,6 +71,7 @@ const DocumentTitle = React.forwardRef(function _DocumentTitle(
   }: Props,
   externalRef: React.RefObject<RefHandle>
 ) {
+  const { t } = useTranslation();
   const ref = React.useRef<RefHandle>(null);
   const [iconPickerIsOpen, handleOpen, setIconPickerClosed] = useBoolean();
   const { editor } = useDocumentContext();
@@ -230,7 +232,7 @@ const DocumentTitle = React.forwardRef(function _DocumentTitle(
   );
 
   const dir = ref.current?.getComputedDirection();
-
+  const initial = title.slice(0, 1).toUpperCase();
   const fallbackIcon = icon ? (
     <Icon value={icon} color={color} size={40} />
   ) : null;
@@ -249,6 +251,7 @@ const DocumentTitle = React.forwardRef(function _DocumentTitle(
       autoFocus={!title}
       maxLength={DocumentValidation.maxTitleLength}
       readOnly={readOnly}
+      aria-label={t("Document title")}
       dir="auto"
       ref={mergeRefs([ref, externalRef])}
     >
@@ -258,6 +261,7 @@ const DocumentTitle = React.forwardRef(function _DocumentTitle(
             <StyledIconPicker
               icon={icon ?? null}
               color={color}
+              initial={initial}
               size={40}
               popoverPosition="bottom-start"
               onChange={handleIconChange}

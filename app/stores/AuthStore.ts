@@ -7,31 +7,19 @@ import { CustomTheme } from "@shared/types";
 import Storage from "@shared/utils/Storage";
 import { getCookieDomain, parseDomain } from "@shared/utils/domains";
 import RootStore from "~/stores/RootStore";
-import Policy from "~/models/Policy";
 import Team from "~/models/Team";
-import User from "~/models/User";
 import env from "~/env";
 import { setPostLoginPath } from "~/hooks/useLastVisitedPath";
-import { PartialWithId } from "~/types";
 import { client } from "~/utils/ApiClient";
 import Desktop from "~/utils/Desktop";
 import Logger from "~/utils/Logger";
 import isCloudHosted from "~/utils/isCloudHosted";
 import Store from "./base/Store";
 
-type PersistedData = {
-  user?: PartialWithId<User>;
-  team?: PartialWithId<Team>;
-  collaborationToken?: string;
-  availableTeams?: {
-    id: string;
-    name: string;
-    avatarUrl: string;
-    url: string;
-    isSignedIn: boolean;
-  }[];
-  policies?: Policy[];
-};
+type PersistedData = Pick<
+  AuthStore,
+  "user" | "team" | "collaborationToken" | "availableTeams" | "policies"
+>;
 
 type Provider = {
   id: string;
@@ -61,6 +49,10 @@ export default class AuthStore extends Store<Team> {
   /* A short-lived token to be used to authenticate with the collaboration server. */
   @observable
   public collaborationToken?: string | null;
+
+  /* When set, the user will be redirected to this URL after logging out. */
+  @observable
+  public logoutRedirectUri?: string;
 
   /* A list of teams that the current user has access to. */
   @observable
@@ -121,7 +113,11 @@ export default class AuthStore extends Store<Team> {
         // we are signed in and the received data contains no user then sign out
         if (this.authenticated) {
           if (isNil(newData.user)) {
-            void this.logout(false, false);
+            void this.logout({
+              savePath: false,
+              revokeToken: false,
+              userInitiated: true,
+            });
           }
         } else {
           this.rehydrate(newData);
@@ -165,9 +161,10 @@ export default class AuthStore extends Store<Team> {
   /** The current team's policies */
   @computed
   get policies() {
-    return this.currentTeamId
-      ? [this.rootStore.policies.get(this.currentTeamId)]
-      : [];
+    const policy = this.currentTeamId
+      ? this.rootStore.policies.get(this.currentTeamId)
+      : undefined;
+    return policy ? [policy] : [];
   }
 
   /** Whether the user is signed in */
@@ -177,7 +174,7 @@ export default class AuthStore extends Store<Team> {
   }
 
   @computed
-  get asJson() {
+  get asJson(): PersistedData {
     return {
       user: this.user,
       team: this.team,
@@ -218,10 +215,10 @@ export default class AuthStore extends Store<Team> {
         this.collaborationToken = res.data.collaborationToken;
 
         if (env.SENTRY_DSN) {
-          Sentry.configureScope(function (scope) {
-            scope.setUser({ id: this.currentUserId });
-            scope.setExtra("team", this.team.name);
-            scope.setExtra("teamId", this.team.id);
+          Sentry.configureScope((scope) => {
+            scope.setUser({ id: this.currentUserId! });
+            scope.setExtra("team", this.team?.name);
+            scope.setExtra("teamId", this.currentTeamId);
           });
         }
 
@@ -241,6 +238,13 @@ export default class AuthStore extends Store<Team> {
           window.location.href = `${data.team.url}${pathname}`;
           return;
         }
+
+        // Update the user's timezone if it has changed
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (data.user.timezone !== timezone) {
+          const user = this.rootStore.users.get(data.user.id);
+          void user?.save({ timezone });
+        }
       });
     } catch (err) {
       if (err.error === "user_suspended") {
@@ -248,6 +252,7 @@ export default class AuthStore extends Store<Team> {
         this.suspendedContactEmail = err.data.adminEmail;
         return;
       }
+      throw err;
     } finally {
       this.isFetching = false;
     }
@@ -301,18 +306,26 @@ export default class AuthStore extends Store<Team> {
    * Logs the user out and optionally revokes the authentication token.
    *
    * @param savePath Whether the current path should be saved and returned to after login.
-   * @param tryRevokingToken Whether the auth token should attempt to be revoked, this should be
+   * @param revokeToken Whether the auth token should attempt to be revoked, this should be
    * disabled with requests from ApiClient to prevent infinite loops.
    */
   @action
-  logout = async (savePath = false, tryRevokingToken = true) => {
+  logout = async ({
+    savePath = false,
+    revokeToken = true,
+    userInitiated = false,
+  }: {
+    savePath?: boolean;
+    revokeToken?: boolean;
+    userInitiated?: boolean;
+  }) => {
     // if this logout was forced from an authenticated route then
     // save the current path so we can go back there once signed in
     if (savePath) {
-      setPostLoginPath(window.location.pathname);
+      setPostLoginPath(window.location.pathname + window.location.search);
     }
 
-    if (tryRevokingToken) {
+    if (revokeToken) {
       try {
         // invalidate authentication token on server and unset auth cookie
         await client.post(`/auth.delete`);
@@ -330,6 +343,10 @@ export default class AuthStore extends Store<Team> {
       setCookie("sessions", JSON.stringify(sessions), {
         domain: getCookieDomain(window.location.hostname, isCloudHosted),
       });
+    }
+
+    if (userInitiated) {
+      this.logoutRedirectUri = env.OIDC_LOGOUT_URI;
     }
 
     // clear all credentials from cache (and local storage via autorun)

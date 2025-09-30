@@ -1,4 +1,5 @@
 import passport from "@outlinewiki/koa-passport";
+import { isURL } from "class-validator";
 import type {
   RESTGetAPICurrentUserGuildsResult,
   RESTGetAPICurrentUserResult,
@@ -26,6 +27,7 @@ import {
 import config from "../../plugin.json";
 import env from "../env";
 import { DiscordGuildError, DiscordGuildRoleError } from "../errors";
+import { createContext } from "@server/context";
 
 const router = new Router();
 
@@ -53,7 +55,7 @@ if (env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) {
         pkce: false,
       },
       async function (
-        ctx: Context,
+        context: Context,
         accessToken: string,
         refreshToken: string,
         params: { expires_in: number },
@@ -65,10 +67,11 @@ if (env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) {
         ) => void
       ) {
         try {
-          const team = await getTeamFromContext(ctx);
-          const client = getClientFromContext(ctx);
+          const team = await getTeamFromContext(context);
+          const client = getClientFromContext(context);
           /** Fetch the user's profile */
           const profile: RESTGetAPICurrentUserResult = await request(
+            "GET",
             "https://discord.com/api/users/@me",
             accessToken
           );
@@ -92,7 +95,7 @@ if (env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) {
 
           /** Default user and team names metadata */
           let userName = profile.username;
-          let teamName = "Wiki";
+          let teamName;
           let userAvatarUrl: string = `https://cdn.discordapp.com/avatars/${profile.id}/${profile.avatar}.png`;
           let teamAvatarUrl: string | undefined = undefined;
           let subdomain = slugifyDomain(domain);
@@ -104,6 +107,7 @@ if (env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) {
           if (env.DISCORD_SERVER_ID) {
             /** Fetch the guilds a user is in */
             const guilds: RESTGetAPICurrentUserGuildsResult = await request(
+              "GET",
               "https://discord.com/api/users/@me/guilds",
               accessToken
             );
@@ -129,13 +133,23 @@ if (env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) {
               }
             }
 
-            /** Guild Name */
             teamName = guild.name;
             subdomain = slugify(guild.name);
+
+            /** If the guild name is a URL, use the subdomain instead – we do not allow URLs in names. */
+            if (
+              isURL(teamName, {
+                require_host: false,
+                require_protocol: false,
+              })
+            ) {
+              teamName = subdomain;
+            }
 
             /** Fetch the user's member object in the server for nickname and roles */
             const guildMember: RESTGetCurrentUserGuildMemberResult =
               await request(
+                "GET",
                 `https://discord.com/api/users/@me/guilds/${env.DISCORD_SERVER_ID}/member`,
                 accessToken
               );
@@ -167,8 +181,8 @@ if (env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) {
           // if a team can be inferred, we assume the user is only interested in signing into
           // that team in particular; otherwise, we will do a best effort at finding their account
           // or provisioning a new one (within AccountProvisioner)
-          const result = await accountProvisioner({
-            ip: ctx.ip,
+          const ctx = createContext({ ip: context.ip });
+          const result = await accountProvisioner(ctx, {
             team: {
               teamId: team?.id,
               name: teamName,

@@ -18,13 +18,14 @@ import {
   Length,
 } from "sequelize-typescript";
 import { globalEventQueue } from "../queues";
-import { APIContext } from "../types";
+import { APIContext, AuthenticationType } from "../types";
 import Collection from "./Collection";
 import Document from "./Document";
 import Team from "./Team";
 import User from "./User";
 import IdModel from "./base/IdModel";
 import Fix from "./decorators/Fix";
+import { Context } from "koa";
 
 @Table({ tableName: "events", modelName: "event", updatedAt: false })
 @Fix
@@ -36,9 +37,7 @@ class Event extends IdModel<
   @Column(DataType.UUID)
   modelId: string | null;
 
-  /**
-   * The name of the event.
-   */
+  /** The name of the event. */
   @Length({
     max: 255,
     msg: "name must be 255 characters or less",
@@ -46,15 +45,18 @@ class Event extends IdModel<
   @Column(DataType.STRING)
   name: string;
 
-  /**
-   * The originating IP address of the event.
-   */
+  /** The originating IP address of the event. */
   @IsIP
   @Column
   ip: string | null;
 
+  /** The type of authentication used to create the event. */
+  @Column(DataType.ENUM(...Object.values(AuthenticationType)))
+  authType: AuthenticationType | null;
+
   /**
    * Metadata associated with the event, previously used for storing some changed attributes.
+   * Note that the `data` column will be visible to the client and API requests.
    */
   @Column(DataType.JSONB)
   data: Record<string, any> | null;
@@ -64,7 +66,7 @@ class Event extends IdModel<
    * used for arbitrary data associated with the event.
    */
   @Column(DataType.JSONB)
-  changes?: Record<string, any> | null;
+  changes: Record<string, any> | null;
 
   // hooks
 
@@ -82,7 +84,12 @@ class Event extends IdModel<
     options: SaveOptions<InferAttributes<Event>>
   ) {
     if (options.transaction) {
-      options.transaction.afterCommit(() => void globalEventQueue.add(model));
+      // 'findOrCreate' creates a new transaction always, and the transaction from the middleware is set as its parent.
+      // We want to use the parent transaction, otherwise the 'afterCommit' hook will never fire in this case.
+      // See: https://github.com/sequelize/sequelize/issues/17452
+      (options.transaction.parent || options.transaction).afterCommit(
+        () => void globalEventQueue.add(model)
+      );
       return;
     }
     void globalEventQueue.add(model);
@@ -109,7 +116,7 @@ class Event extends IdModel<
 
   @ForeignKey(() => User)
   @Column(DataType.UUID)
-  actorId: string;
+  actorId: string | null;
 
   @BelongsTo(() => Collection, "collectionId")
   collection: Collection | null;
@@ -160,19 +167,26 @@ class Event extends IdModel<
    * @returns A promise resolving to the new event
    */
   static createFromContext(
-    ctx: APIContext,
+    ctx: Context | APIContext,
     attributes: Omit<Partial<Event>, "ip" | "teamId" | "actorId"> = {},
+    defaultAttributes: Pick<Partial<Event>, "ip" | "teamId" | "actorId"> = {},
     options?: CreateOptions<InferAttributes<Event>>
   ) {
-    const { user } = ctx.state.auth;
+    const user = ctx.state.auth?.user;
+    const authType = ctx.state.auth?.type;
+
     return this.create(
       {
         ...attributes,
-        actorId: user.id,
-        teamId: user.teamId,
-        ip: ctx.request.ip,
+        actorId: user?.id || defaultAttributes.actorId,
+        teamId: user?.teamId || defaultAttributes.teamId,
+        ip: ctx.request.ip || defaultAttributes.ip,
+        authType,
       },
-      options
+      {
+        transaction: ctx.state.transaction,
+        ...options,
+      }
     );
   }
 }

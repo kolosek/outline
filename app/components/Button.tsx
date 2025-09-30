@@ -1,5 +1,5 @@
 import { LocationDescriptor } from "history";
-import { ExpandedIcon } from "outline-icons";
+import { DisclosureIcon } from "outline-icons";
 import { darken, lighten, transparentize } from "polished";
 import * as React from "react";
 import styled from "styled-components";
@@ -78,6 +78,10 @@ const RealButton = styled(ActionButton)<RealProps>`
       box-shadow: rgba(0, 0, 0, 0.07) 0px 1px 2px, ${
         props.theme.buttonNeutralBorder
       } 0 0 0 1px inset;
+    }
+
+    &:focus-visible {
+      box-shadow: ${`rgba(0, 0, 0, 0.07) 0px 1px 2px, ${props.theme.inputBorderFocused} 0 0 0 1px inset`};
     }
 
     &:disabled {
@@ -172,7 +176,7 @@ const Button = <T extends React.ElementType = "button">(
     ...rest
   } = props;
   const hasText = !!children || value !== undefined;
-  const ic = hideIcon ? undefined : action?.icon ?? icon;
+  const ic = hideIcon ? undefined : (action?.icon ?? icon);
   const hasIcon = ic !== undefined;
 
   return (
@@ -189,10 +193,14 @@ const Button = <T extends React.ElementType = "button">(
       <Inner hasIcon={hasIcon} hasText={hasText} disclosure={disclosure}>
         {hasIcon && ic}
         {hasText && <Label hasIcon={hasIcon}>{children || value}</Label>}
-        {disclosure && <ExpandedIcon />}
+        {disclosure && <StyledDisclosureIcon />}
       </Inner>
     </RealButton>
   );
 };
+
+const StyledDisclosureIcon = styled(DisclosureIcon)`
+  opacity: 0.8;
+`;
 
 export default React.forwardRef(Button);

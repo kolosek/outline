@@ -7,11 +7,10 @@ import * as React from "react";
 import { Link } from "react-router-dom";
 import styled, { css } from "styled-components";
 import breakpoint from "styled-components-breakpoint";
-import { s, ellipsis } from "@shared/styles";
+import { s, hover, ellipsis } from "@shared/styles";
 import Document from "~/models/Document";
 import Highlight, { Mark } from "~/components/Highlight";
-import { hover } from "~/styles";
-import { sharedDocumentPath } from "~/utils/routeHelpers";
+import { sharedModelPath } from "~/utils/routeHelpers";
 
 type Props = {
   document: Document;
@@ -52,7 +51,7 @@ function DocumentListItem(
       dir={document.dir}
       to={{
         pathname: shareId
-          ? sharedDocumentPath(shareId, document.url)
+          ? sharedModelPath(shareId, document.url)
           : document.url,
         state: {
           title: document.titleWithDefault,

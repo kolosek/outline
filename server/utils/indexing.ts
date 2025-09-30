@@ -1,17 +1,17 @@
 import fractionalIndex from "fractional-index";
+import { FindOptions } from "sequelize";
 import naturalSort from "@shared/utils/naturalSort";
 import { Collection, Document, Star } from "@server/models";
 
 export async function collectionIndexing(
-  teamId: string
-): Promise<{ [id: string]: string }> {
+  teamId: string,
+  { transaction }: FindOptions<Collection>
+) {
   const collections = await Collection.findAll({
     where: {
       teamId,
-      // no point in maintaining index of deleted collections.
-      deletedAt: null,
     },
-    attributes: ["id", "index", "name"],
+    transaction,
   });
 
   const sortable = naturalSort(collections, (collection) => collection.name);
@@ -23,7 +23,9 @@ export async function collectionIndexing(
   for (const collection of sortable) {
     if (collection.index === null) {
       collection.index = fractionalIndex(previousIndex, null);
-      promises.push(collection.save());
+      promises.push(
+        collection.save({ fields: ["index"], silent: true, transaction })
+      );
     }
 
     previousIndex = collection.index;
@@ -31,16 +33,14 @@ export async function collectionIndexing(
 
   await Promise.all(promises);
 
-  const indexedCollections = {};
+  const indexedCollections: Record<string, string | null> = {};
   sortable.forEach((collection) => {
     indexedCollections[collection.id] = collection.index;
   });
   return indexedCollections;
 }
 
-export async function starIndexing(
-  userId: string
-): Promise<{ [id: string]: string }> {
+export async function starIndexing(userId: string) {
   const stars = await Star.findAll({
     where: { userId },
   });
@@ -66,7 +66,7 @@ export async function starIndexing(
   for (const star of sortable) {
     if (star.index === null) {
       star.index = fractionalIndex(previousIndex, null);
-      promises.push(star.save());
+      promises.push(star.save({ silent: true }));
     }
 
     previousIndex = star.index;
@@ -74,7 +74,7 @@ export async function starIndexing(
 
   await Promise.all(promises);
 
-  const indexedStars = {};
+  const indexedStars: Record<string, string | null> = {};
   sortable.forEach((star) => {
     indexedStars[star.id] = star.index;
   });

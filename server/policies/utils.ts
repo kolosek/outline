@@ -1,7 +1,8 @@
 import env from "@server/env";
-import { IncorrectEditionError } from "@server/errors";
-import { User, Team } from "@server/models";
+import { User, Team, type Group } from "@server/models";
 import Model from "@server/models/base/Model";
+import { GroupPermission } from "@shared/types";
+import invariant from "invariant";
 
 type Args = boolean | string | Args[];
 
@@ -11,8 +12,7 @@ export function and(...args: Args[]) {
 }
 
 export function or(...args: Args[]) {
-  const filtered = args.filter(Boolean);
-  return filtered.length > 0 ? filtered : false;
+  return args.find(Boolean) || false;
 }
 
 /**
@@ -73,6 +73,17 @@ export function isTeamAdmin(
 }
 
 /**
+ * Check if the actor is a member of the team.
+ *
+ * @param actor The actor to check
+ * @param model The model to check
+ * @returns True if the actor is a member of the team the model belongs to
+ */
+export function isTeamMember(actor: User, model: Model | null | undefined) {
+  return !!and(isTeamModel(actor, model), actor.isMember);
+}
+
+/**
  * Check the actors team is mutable, meaning the team models can be modified.
  *
  * @param actor The actor to check
@@ -87,9 +98,40 @@ export function isTeamMutable(_actor: User, _model?: Model | null) {
  */
 export function isCloudHosted() {
   if (!env.isCloudHosted) {
-    throw IncorrectEditionError(
-      "Functionality is not available in this edition"
-    );
+    return false;
   }
   return true;
+}
+
+/**
+ * Check if the actor is an admin of the group.
+ *
+ * @param actor The actor to check
+ * @param model The group model to check
+ * @returns True if the actor is an admin of the group
+ */
+export function isGroupAdmin(actor: User, model: Group | null): boolean {
+  if (!model || !("id" in model)) {
+    return false;
+  }
+
+  invariant(
+    model.groupUsers,
+    "Group users relationship not loaded, ensure to include groupUsers when fetching the group"
+  );
+
+  // Check if the user is a group admin
+  const membership = model.groupUsers.find(
+    (gu) => gu.userId === actor.id && gu.permission === GroupPermission.Admin
+  );
+  if (membership) {
+    return true;
+  }
+
+  // Team admins are always group admins
+  if (isTeamAdmin(actor, model)) {
+    return true;
+  }
+
+  return false;
 }

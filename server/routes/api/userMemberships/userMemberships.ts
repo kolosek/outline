@@ -1,5 +1,4 @@
 import Router from "koa-router";
-
 import { Op, Sequelize } from "sequelize";
 import auth from "@server/middlewares/authentication";
 import { transaction } from "@server/middlewares/transaction";
@@ -46,14 +45,8 @@ router.post(
     const documentIds = memberships
       .map((p) => p.documentId)
       .filter(Boolean) as string[];
-    const documents = await Document.scope([
-      "withDrafts",
-      { method: ["withMembership", user.id] },
-      { method: ["withCollectionPermissions", user.id] },
-    ]).findAll({
-      where: {
-        id: documentIds,
-      },
+    const documents = await Document.findByIds(documentIds, {
+      userId: user.id,
     });
 
     const policies = presentPolicies(user, [...documents, ...memberships]);
@@ -91,19 +84,15 @@ router.post(
     membership.index = index;
     await membership.save({ transaction });
 
-    await Event.createFromContext(
-      ctx,
-      {
-        name: "userMemberships.update",
-        modelId: membership.id,
-        userId: membership.userId,
-        documentId: membership.documentId,
-        data: {
-          index: membership.index,
-        },
+    await Event.createFromContext(ctx, {
+      name: "userMemberships.update",
+      modelId: membership.id,
+      userId: membership.userId,
+      documentId: membership.documentId,
+      data: {
+        index: membership.index,
       },
-      { transaction }
-    );
+    });
 
     ctx.body = {
       data: presentMembership(membership),

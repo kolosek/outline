@@ -35,7 +35,7 @@ export class SlackUtils {
 
   static callbackUrl(
     { baseUrl, params }: { baseUrl: string; params?: string } = {
-      baseUrl: `${env.URL}`,
+      baseUrl: env.URL,
       params: undefined,
     }
   ) {
@@ -46,7 +46,7 @@ export class SlackUtils {
 
   static connectUrl(
     { baseUrl, params }: { baseUrl: string; params?: string } = {
-      baseUrl: `${env.URL}`,
+      baseUrl: env.URL,
       params: undefined,
     }
   ) {
@@ -74,7 +74,7 @@ export class SlackUtils {
     redirectUri = SlackUtils.callbackUrl()
   ): string {
     const baseUrl = SlackUtils.authBaseUrl;
-    const params = {
+    const params: Record<string, string> = {
       client_id: env.SLACK_CLIENT_ID,
       scope: scopes ? scopes.join(" ") : "",
       redirect_uri: redirectUri,

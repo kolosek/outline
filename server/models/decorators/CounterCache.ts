@@ -19,7 +19,7 @@ type RelationOptions = {
 export function CounterCache<
   TCreationAttributes extends InferAttributes<Model>,
   TModelAttributes extends InferAttributes<Model>,
-  T extends typeof Model
+  T extends typeof Model,
 >(
   classResolver: ModelClassGetter<TCreationAttributes, TModelAttributes>,
   options: RelationOptions
@@ -36,11 +36,14 @@ export function CounterCache<
     setImmediate(() => {
       const recalculateCache =
         (offset: number) => async (model: InstanceType<T>) => {
-          const cacheKey = `${cacheKeyPrefix}:${model[options.foreignKey]}`;
+          const cacheKey = `${cacheKeyPrefix}:${
+            model[options.foreignKey as keyof typeof model]
+          }`;
 
           const count = await modelClass.count({
             where: {
-              [options.foreignKey]: model[options.foreignKey],
+              [options.foreignKey]:
+                model[options.foreignKey as keyof typeof model],
             },
           });
           await CacheHelper.setData(cacheKey, count + offset);

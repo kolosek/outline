@@ -1,5 +1,5 @@
 import { LinkIcon } from "outline-icons";
-import * as React from "react";
+import { useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import CopyToClipboard from "~/components/CopyToClipboard";
@@ -14,9 +14,9 @@ export function CopyLinkButton({
   onCopy: () => void;
 }) {
   const { t } = useTranslation();
-  const timeout = React.useRef<ReturnType<typeof setTimeout>>();
+  const timeout = useRef<ReturnType<typeof setTimeout>>();
 
-  const handleCopied = React.useCallback(() => {
+  const handleCopied = useCallback(() => {
     onCopy();
 
     timeout.current = setTimeout(() => {
@@ -31,7 +31,7 @@ export function CopyLinkButton({
   }, [onCopy, t]);
 
   return (
-    <Tooltip content={t("Copy link")} delay={500} placement="top">
+    <Tooltip content={t("Copy link")} placement="top">
       <CopyToClipboard text={url} onCopy={handleCopied}>
         <NudeButton type="button">
           <LinkIcon size={20} />

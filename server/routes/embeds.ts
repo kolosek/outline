@@ -1,6 +1,7 @@
 import escape from "escape-html";
 import { Context, Next } from "koa";
 import env from "@server/env";
+import { InvalidRequestError } from "@server/errors";
 
 /**
  * Resize observer script that sends a message to the parent window when content is resized. Inject
@@ -41,14 +42,14 @@ export const renderEmbed = async (ctx: Context, next: Next) => {
   const url = escape(String(ctx.query.url));
 
   if (!url) {
-    ctx.throw(400, "url is required");
+    ctx.throw(InvalidRequestError("url is required"));
   }
 
   let parsed;
   try {
     parsed = new URL(url);
-  } catch (err) {
-    ctx.throw(400, "Invalid URL provided");
+  } catch (_err) {
+    ctx.throw(InvalidRequestError("Invalid URL provided"));
   }
 
   if (
@@ -143,11 +144,106 @@ ${iframeCheckScript(ctx)}
 </head>
 <body>
 <a href="${parsed}" class="dropbox-embed">
-<script type="text/javascript" src="${dropboxJs}" 
+<script type="text/javascript" src="${dropboxJs}"
 id="dropboxjs" data-app-key="${env.DROPBOX_APP_KEY}"></script>
 ${resizeObserverScript(ctx)}
 </body>
 `;
+    return;
+  }
+
+  if (
+    parsed.host.endsWith("pinterest.com") &&
+    parsed.protocol === "https:" &&
+    ctx.path === "/embeds/pinterest"
+  ) {
+    const pinterestJs = "https://assets.pinterest.com/js/pinit.js";
+    const csp = ctx.response.get("Content-Security-Policy");
+
+    const pathParts = parsed.pathname.split("/").filter(Boolean);
+    const isProfile =
+      pathParts.length === 1 ||
+      (pathParts.length === 2 && pathParts[1].startsWith("_"));
+    const pinType = isProfile ? "embedUser" : "embedBoard";
+
+    ctx.set(
+      "Content-Security-Policy",
+      csp
+        .replace(
+          "script-src",
+          "script-src assets.pinterest.com widgets.pinterest.com"
+        )
+        .replace(
+          "style-src",
+          "style-src assets.pinterest.com widgets.pinterest.com"
+        )
+    );
+    ctx.set("X-Frame-Options", "sameorigin");
+
+    ctx.type = "html";
+    ctx.body = `
+<html>
+<head>
+<style>
+  html, body, iframe {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    min-height: 100px;
+  }
+  .pinterest-container {
+    width: 100%;
+    max-width: 100vw;
+    display: flex;
+    justify-content: center;
+  }
+
+  .pinterest-container > span {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  .pinterest-container iframe {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  span[class*="_bd"] {
+    height: 100% !important;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .pinterest-container > span {
+      border-color: rgb(35, 38, 41) !important;
+      background-color: rgb(22, 25, 28) !important;
+    }
+
+    [class$="_pinner"],
+    [class$="_board"] {
+      color: #e6e6e6 !important;
+    }
+    [class$="_button"] {
+      border-color: rgb(38, 42, 50) !important;
+      background-color: rgba(3, 58, 120, 0.1) !important;
+    }
+  }
+</style>
+<base target="_parent">
+${iframeCheckScript(ctx)}
+</head>
+<body>
+<div class="pinterest-container">
+  <a
+    data-pin-do="${pinType}"
+    data-pin-board-width="100%"
+    href="${url}"
+    style="width:100%;max-width:none;"
+  ></a>
+</div>
+<script type="text/javascript" async defer src="${pinterestJs}"></script>
+${resizeObserverScript(ctx)}
+</body>
+</html>`;
     return;
   }
 

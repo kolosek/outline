@@ -8,6 +8,13 @@ export function homePath(): string {
   return env.ROOT_SHARE_ID ? "/" : "/home";
 }
 
+export function logoutPath() {
+  return {
+    pathname: "/",
+    search: "logout=true",
+  };
+}
+
 export function draftsPath(): string {
   return "/drafts";
 }
@@ -20,12 +27,14 @@ export function trashPath(): string {
   return "/trash";
 }
 
-export function settingsPath(section?: string): string {
-  return "/settings" + (section ? `/${section}` : "");
+export function settingsPath(...args: string[]): string {
+  return "/settings" + (args.length > 0 ? `/${args.join("/")}` : "");
 }
 
 export function commentPath(document: Document, comment: Comment): string {
-  return `${documentPath(document)}?commentId=${comment.id}`;
+  return `${documentPath(document)}?commentId=${comment.id}${
+    comment.isResolved ? "&resolved=1" : ""
+  }`;
 }
 
 export function collectionPath(url: string, section?: string): string {
@@ -52,10 +61,6 @@ export function documentPath(doc: Document): string {
 
 export function documentEditPath(doc: Document): string {
   return `${documentPath(doc)}/edit`;
-}
-
-export function documentInsightsPath(doc: Document): string {
-  return `${documentPath(doc)}/insights`;
 }
 
 export function documentHistoryPath(
@@ -102,36 +107,42 @@ export function newNestedDocumentPath(parentDocumentId?: string): string {
   return `/doc/new?${queryString.stringify({ parentDocumentId })}`;
 }
 
-export function searchPath(
-  query?: string,
-  params: {
-    collectionId?: string;
-    documentId?: string;
-    ref?: string;
-  } = {}
-): string {
-  let search = queryString.stringify(params);
-  let route = "/search";
-
-  if (query) {
-    route += `/${encodeURIComponent(query.replace(/%/g, "%25"))}`;
-  }
+export function searchPath({
+  query,
+  collectionId,
+  documentId,
+  ref,
+}: {
+  query?: string;
+  collectionId?: string;
+  documentId?: string;
+  ref?: string;
+} = {}): string {
+  let search = queryString.stringify({
+    q: query,
+    collectionId,
+    documentId,
+    ref,
+  });
 
   search = search ? `?${search}` : "";
-  return `${route}${search}`;
+  return `/search${search}`;
 }
 
-export function sharedDocumentPath(shareId: string, docPath?: string) {
+export function sharedModelPath(shareId: string, modelPath?: string) {
   if (shareId === env.ROOT_SHARE_ID) {
-    return docPath ? docPath : "/";
+    return modelPath ? modelPath : "/";
   }
 
-  return docPath ? `/s/${shareId}${docPath}` : `/s/${shareId}`;
+  return modelPath ? `/s/${shareId}${modelPath}` : `/s/${shareId}`;
 }
 
 export function urlify(path: string): string {
   return `${window.location.origin}${path}`;
 }
+
+export const matchCollectionSlug =
+  ":collectionSlug([0-9a-zA-Z-_~]*-[a-zA-z0-9]{10,15})";
 
 export const matchDocumentSlug =
   ":documentSlug([0-9a-zA-Z-_~]*-[a-zA-z0-9]{10,15})";
@@ -139,5 +150,3 @@ export const matchDocumentSlug =
 export const matchDocumentEdit = `/doc/${matchDocumentSlug}/edit`;
 
 export const matchDocumentHistory = `/doc/${matchDocumentSlug}/history/:revisionId?`;
-
-export const matchDocumentInsights = `/doc/${matchDocumentSlug}/insights`;

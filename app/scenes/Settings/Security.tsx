@@ -10,7 +10,7 @@ import { TeamPreference } from "@shared/types";
 import ConfirmationDialog from "~/components/ConfirmationDialog";
 import Flex from "~/components/Flex";
 import Heading from "~/components/Heading";
-import InputSelect from "~/components/InputSelect";
+import { InputSelect, Option } from "~/components/InputSelect";
 import PluginIcon from "~/components/PluginIcon";
 import Scene from "~/components/Scene";
 import Switch from "~/components/Switch";
@@ -44,6 +44,23 @@ function Security() {
     request,
   } = useRequest(authenticationProviders.fetchPage);
 
+  const userRoleOptions: Option[] = React.useMemo(
+    () =>
+      [
+        {
+          type: "item",
+          label: t("Editor"),
+          value: "member",
+        },
+        {
+          type: "item",
+          label: t("Viewer"),
+          value: "viewer",
+        },
+      ] satisfies Option[],
+    [t]
+  );
+
   React.useEffect(() => {
     if (!providers && !loading) {
       void request();
@@ -71,13 +88,6 @@ function Security() {
     [team, showSuccessMessage]
   );
 
-  const handleChange = React.useCallback(
-    async (ev: React.ChangeEvent<HTMLInputElement>) => {
-      await saveData({ [ev.target.id]: ev.target.checked });
-    },
-    [saveData]
-  );
-
   const handleDefaultRoleChange = React.useCallback(
     async (newDefaultRole: string) => {
       await saveData({ defaultUserRole: newDefaultRole });
@@ -85,11 +95,68 @@ function Security() {
     [saveData]
   );
 
-  const handlePreferenceChange = React.useCallback(
-    async (ev: React.ChangeEvent<HTMLInputElement>) => {
+  const handleGuestSigninChange = React.useCallback(
+    async (checked: boolean) => {
+      await saveData({ guestSignin: checked });
+    },
+    [saveData]
+  );
+
+  const handleSharingChange = React.useCallback(
+    async (checked: boolean) => {
+      await saveData({ sharing: checked });
+    },
+    [saveData]
+  );
+
+  const handleDocumentEmbedsChange = React.useCallback(
+    async (checked: boolean) => {
+      await saveData({ documentEmbeds: checked });
+    },
+    [saveData]
+  );
+
+  const handleMemberCollectionCreateChange = React.useCallback(
+    async (checked: boolean) => {
+      await saveData({ memberCollectionCreate: checked });
+    },
+    [saveData]
+  );
+
+  const handleMemberTeamCreateChange = React.useCallback(
+    async (checked: boolean) => {
+      await saveData({ memberTeamCreate: checked });
+    },
+    [saveData]
+  );
+
+  const handleMembersCanInviteChange = React.useCallback(
+    async (checked: boolean) => {
       const preferences = {
         ...team.preferences,
-        [ev.target.id]: ev.target.checked,
+        [TeamPreference.MembersCanInvite]: checked,
+      };
+      await saveData({ preferences });
+    },
+    [saveData, team.preferences]
+  );
+
+  const handleViewersCanExportChange = React.useCallback(
+    async (checked: boolean) => {
+      const preferences = {
+        ...team.preferences,
+        [TeamPreference.ViewersCanExport]: checked,
+      };
+      await saveData({ preferences });
+    },
+    [saveData, team.preferences]
+  );
+
+  const handleMembersCanDeleteAccountChange = React.useCallback(
+    async (checked: boolean) => {
+      const preferences = {
+        ...team.preferences,
+        [TeamPreference.MembersCanDeleteAccount]: checked,
       };
       await saveData({ preferences });
     },
@@ -97,8 +164,8 @@ function Security() {
   );
 
   const handleInviteRequiredChange = React.useCallback(
-    async (ev: React.ChangeEvent<HTMLInputElement>) => {
-      const inviteRequired = ev.target.checked;
+    async (checked: boolean) => {
+      const inviteRequired = checked;
       const newData = { ...data, inviteRequired };
 
       if (inviteRequired) {
@@ -124,10 +191,9 @@ function Security() {
             </ConfirmationDialog>
           ),
         });
-        return;
+      } else {
+        await saveData(newData);
       }
-
-      await saveData(newData);
     },
     [data, saveData, t, dialogs, team.signinMethods]
   );
@@ -187,7 +253,7 @@ function Security() {
         <Switch
           id="guestSignin"
           checked={data.guestSignin}
-          onChange={handleChange}
+          onChange={handleGuestSigninChange}
           disabled={!env.EMAIL_ENABLED}
         />
       </SettingRow>
@@ -201,7 +267,7 @@ function Security() {
         <Switch
           id={TeamPreference.MembersCanInvite}
           checked={team.getPreference(TeamPreference.MembersCanInvite)}
-          onChange={handlePreferenceChange}
+          onChange={handleMembersCanInviteChange}
         />
       </SettingRow>
       {isCloudHosted && (
@@ -221,9 +287,6 @@ function Security() {
       )}
 
       {!data.inviteRequired && (
-        <DomainManagement onSuccess={showSuccessMessage} />
-      )}
-      {!data.inviteRequired && (
         <SettingRow
           label={t("Default role")}
           name="defaultUserRole"
@@ -233,24 +296,17 @@ function Security() {
           border={false}
         >
           <InputSelect
-            id="defaultUserRole"
             value={data.defaultUserRole}
-            options={[
-              {
-                label: t("Editor"),
-                value: "member",
-              },
-              {
-                label: t("Viewer"),
-                value: "viewer",
-              },
-            ]}
+            options={userRoleOptions}
             onChange={handleDefaultRoleChange}
-            ariaLabel={t("Default role")}
+            label={t("Default role")}
+            hideLabel
             short
           />
         </SettingRow>
       )}
+
+      <DomainManagement onSuccess={showSuccessMessage} />
 
       <h2>{t("Behavior")}</h2>
       <SettingRow
@@ -260,7 +316,11 @@ function Security() {
           "When enabled, documents can be shared publicly on the internet by any member of the workspace"
         )}
       >
-        <Switch id="sharing" checked={data.sharing} onChange={handleChange} />
+        <Switch
+          id="sharing"
+          checked={data.sharing}
+          onChange={handleSharingChange}
+        />
       </SettingRow>
       <SettingRow
         label={t("Viewer document exports")}
@@ -272,7 +332,7 @@ function Security() {
         <Switch
           id={TeamPreference.ViewersCanExport}
           checked={team.getPreference(TeamPreference.ViewersCanExport)}
-          onChange={handlePreferenceChange}
+          onChange={handleViewersCanExportChange}
         />
       </SettingRow>
       <SettingRow
@@ -285,7 +345,7 @@ function Security() {
         <Switch
           id={TeamPreference.MembersCanDeleteAccount}
           checked={team.getPreference(TeamPreference.MembersCanDeleteAccount)}
-          onChange={handlePreferenceChange}
+          onChange={handleMembersCanDeleteAccountChange}
         />
       </SettingRow>
       <SettingRow
@@ -298,7 +358,7 @@ function Security() {
         <Switch
           id="documentEmbeds"
           checked={data.documentEmbeds}
-          onChange={handleChange}
+          onChange={handleDocumentEmbedsChange}
         />
       </SettingRow>
       <SettingRow
@@ -311,7 +371,7 @@ function Security() {
         <Switch
           id="memberCollectionCreate"
           checked={data.memberCollectionCreate}
-          onChange={handleChange}
+          onChange={handleMemberCollectionCreateChange}
         />
       </SettingRow>
       {isCloudHosted && (
@@ -323,7 +383,7 @@ function Security() {
           <Switch
             id="memberTeamCreate"
             checked={data.memberTeamCreate}
-            onChange={handleChange}
+            onChange={handleMemberTeamCreateChange}
           />
         </SettingRow>
       )}

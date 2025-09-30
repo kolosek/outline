@@ -6,6 +6,8 @@ export const TeamsUpdateSchema = BaseSchema.extend({
   body: z.object({
     /** Team name */
     name: z.string().optional(),
+    /** Team description */
+    description: z.string().nullish(),
     /** Avatar URL */
     avatarUrl: z.string().nullish(),
     /** The subdomain to access the team */
@@ -43,6 +45,8 @@ export const TeamsUpdateSchema = BaseSchema.extend({
         membersCanCreateApiKey: z.boolean().optional(),
         /** Whether members can delete their user account. */
         membersCanDeleteAccount: z.boolean().optional(),
+        /** Whether notification emails include document and comment content. */
+        previewsInEmails: z.boolean().optional(),
         /** Whether commenting is enabled */
         commenting: z.boolean().optional(),
         /** The custom theme for the team. */
@@ -54,6 +58,8 @@ export const TeamsUpdateSchema = BaseSchema.extend({
           .optional(),
         /** Side to display the document's table of contents in relation to the main content. */
         tocPosition: z.nativeEnum(TOCPosition).optional(),
+        /** Whether to prevent shared documents from being embedded in iframes on external websites. */
+        preventDocumentEmbedding: z.boolean().optional(),
       })
       .optional(),
   }),

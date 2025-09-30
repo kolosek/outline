@@ -2,9 +2,9 @@ import { action } from "mobx";
 import { PlusIcon } from "outline-icons";
 import { Plugin } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
-import * as React from "react";
 import ReactDOM from "react-dom";
 import { WidgetProps } from "@shared/editor/lib/Extension";
+import { PlaceholderPlugin } from "@shared/editor/plugins/PlaceholderPlugin";
 import { findParentNode } from "@shared/editor/queries/findParentNode";
 import Suggestion from "~/editor/extensions/Suggestion";
 import BlockMenu from "../components/BlockMenu";
@@ -12,9 +12,10 @@ import BlockMenu from "../components/BlockMenu";
 export default class BlockMenuExtension extends Suggestion {
   get defaultOptions() {
     return {
-      // ported from https://github.com/tc39/proposal-regexp-unicode-property-escapes#unicode-aware-version-of-w
-      openRegex: /(?:^|\s|\()\/([\p{L}\p{M}\d]+)?$/u,
-      closeRegex: /(?:^|\s|\()\/(([\p{L}\p{M}\d]*\s+)|(\s+[\p{L}\p{M}\d]+))$/u,
+      trigger: "/",
+      allowSpaces: false,
+      requireSearchTerm: false,
+      enabledInCode: false,
     };
   }
 
@@ -48,7 +49,6 @@ export default class BlockMenuExtension extends Suggestion {
 
             const decorations: Decoration[] = [];
             const isEmptyNode = parent && parent.node.content.size === 0;
-            const isSlash = parent && parent.node.textContent === "/";
 
             if (isEmptyNode) {
               decorations.push(
@@ -68,52 +68,55 @@ export default class BlockMenuExtension extends Suggestion {
                   }
                 )
               );
-
-              const isEmptyDoc = state.doc.textContent === "";
-              if (!isEmptyDoc) {
-                decorations.push(
-                  Decoration.node(
-                    parent.pos,
-                    parent.pos + parent.node.nodeSize,
-                    {
-                      class: "placeholder",
-                      "data-empty-text": this.options.dictionary.newLineEmpty,
-                    }
-                  )
-                );
-              }
-            } else if (isSlash) {
-              decorations.push(
-                Decoration.node(parent.pos, parent.pos + parent.node.nodeSize, {
-                  class: "placeholder",
-                  "data-empty-text": `  ${this.options.dictionary.newLineWithSlash}`,
-                })
-              );
             }
 
             return DecorationSet.create(state.doc, decorations);
           },
         },
       }),
+      new PlaceholderPlugin([
+        {
+          condition: ({ node, $start, textContent, state }) =>
+            $start.depth === 1 &&
+            state.selection.$from.pos === $start.pos + node.content.size &&
+            !!textContent &&
+            node.childCount === 0 &&
+            node.textContent === "",
+          text: this.options.dictionary.newLineEmpty,
+        },
+        {
+          condition: ({ node, $start, state }) =>
+            $start.depth === 1 &&
+            state.selection.$from.pos === $start.pos + node.content.size &&
+            node.textContent === "/",
+          text: `  ${this.options.dictionary.newLineWithSlash}`,
+        },
+      ]),
     ];
   }
 
+  private handleClose = action((insertNewLine: boolean) => {
+    const { view } = this.editor;
+
+    if (insertNewLine) {
+      const transaction = view.state.tr.split(view.state.selection.to);
+      view.dispatch(transaction);
+      view.focus();
+    }
+
+    this.state.open = false;
+  });
+
   widget = ({ rtl }: WidgetProps) => {
-    const { props, view } = this.editor;
+    const { props } = this.editor;
+
     return (
       <BlockMenu
         rtl={rtl}
+        trigger={this.options.trigger}
         isActive={this.state.open}
         search={this.state.query}
-        onClose={action((insertNewLine) => {
-          if (insertNewLine) {
-            const transaction = view.state.tr.split(view.state.selection.to);
-            view.dispatch(transaction);
-            view.focus();
-          }
-
-          this.state.open = false;
-        })}
+        onClose={this.handleClose}
         uploadFile={props.uploadFile}
         onFileUploadStart={props.onFileUploadStart}
         onFileUploadStop={props.onFileUploadStop}

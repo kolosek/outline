@@ -6,6 +6,10 @@ import yauzl, { Entry, validateFileName } from "yauzl";
 import { bytesToHumanReadable } from "@shared/utils/files";
 import Logger from "@server/logging/Logger";
 import { trace } from "@server/logging/tracing";
+import { trimFileAndExt } from "./fs";
+
+const MAX_FILE_NAME_LENGTH = 255;
+const MAX_PATH_LENGTH = 4096;
 
 @trace()
 export default class ZipHelper {
@@ -37,7 +41,7 @@ export default class ZipHelper {
           prefix: "export-",
           postfix: ".zip",
         },
-        (err, path) => {
+        (err, filePath) => {
           if (err) {
             return reject(err);
           }
@@ -47,13 +51,24 @@ export default class ZipHelper {
             currentFile: null,
           };
 
+          const handleError = (error: Error) => {
+            dest.destroy();
+            fs.remove(filePath)
+              .catch((rmErr) => {
+                Logger.error("Failed to remove tmp file", rmErr);
+              })
+              .finally(() => {
+                reject(error);
+              });
+          };
+
           const dest = fs
-            .createWriteStream(path)
+            .createWriteStream(filePath)
             .on("finish", () => {
-              Logger.debug("utils", "Writing zip complete", { path });
-              return resolve(path);
+              Logger.debug("utils", "Writing zip complete", { path: filePath });
+              return resolve(filePath);
             })
-            .on("error", reject);
+            .on("error", handleError);
 
           zip
             .generateNodeStream(
@@ -81,11 +96,9 @@ export default class ZipHelper {
                 }
               }
             )
-            .on("error", (err) => {
-              dest.end();
-              reject(err);
-            })
-            .pipe(dest);
+            .on("error", handleError)
+            .pipe(dest)
+            .on("error", handleError);
         }
       );
     });
@@ -119,54 +132,86 @@ export default class ZipHelper {
           try {
             zipfile.readEntry();
             zipfile.on("entry", function (entry: Entry) {
-              const fileName = Buffer.from(entry.fileName).toString("utf8");
-              Logger.debug("utils", "Extracting zip entry", { fileName });
+              const filePath = Buffer.from(entry.fileName).toString("utf8");
+              Logger.debug("utils", "Extracting zip entry", { filePath });
 
-              if (validateFileName(fileName)) {
-                Logger.warn("Invalid zip entry", { fileName });
+              const processNext = (error?: NodeJS.ErrnoException | null) => {
+                if (error) {
+                  zipfile.close();
+                  reject(error);
+                  return;
+                }
                 zipfile.readEntry();
-              } else if (/\/$/.test(fileName)) {
+              };
+
+              if (validateFileName(filePath)) {
+                Logger.warn("Invalid zip entry", { filePath });
+                processNext();
+                return;
+              }
+
+              if (/\/$/.test(filePath)) {
                 // directory file names end with '/'
-                fs.mkdirp(
-                  path.join(outputDir, fileName),
-                  function (err: Error) {
-                    if (err) {
-                      throw err;
-                    }
-                    zipfile.readEntry();
-                  }
+                fs.mkdirp(path.join(outputDir, filePath), (mkErr) =>
+                  processNext(mkErr)
                 );
               } else {
                 // file entry
-                zipfile.openReadStream(entry, function (err, readStream) {
-                  if (err) {
-                    throw err;
+                zipfile.openReadStream(entry, function (rErr, readStream) {
+                  if (rErr) {
+                    return processNext(rErr);
                   }
                   // ensure parent directory exists
                   fs.mkdirp(
-                    path.join(outputDir, path.dirname(fileName)),
-                    function (err) {
-                      if (err) {
-                        throw err;
+                    path.join(outputDir, path.dirname(filePath)),
+                    function (mkErr) {
+                      if (mkErr) {
+                        return processNext(mkErr);
                       }
-                      readStream.pipe(
-                        fs.createWriteStream(path.join(outputDir, fileName))
+
+                      const fileName = trimFileAndExt(
+                        path.basename(filePath),
+                        MAX_FILE_NAME_LENGTH
                       );
-                      readStream.on("end", function () {
-                        zipfile.readEntry();
-                      });
-                      readStream.on("error", (err) => {
-                        throw err;
-                      });
+
+                      const location = trimFileAndExt(
+                        path.join(outputDir, path.dirname(filePath), fileName),
+                        MAX_PATH_LENGTH
+                      );
+
+                      const dest = fs
+                        .createWriteStream(location)
+                        .on("error", (error) => {
+                          readStream.destroy();
+                          dest.destroy();
+                          processNext(error);
+                        });
+
+                      readStream
+                        .on("error", (error) => {
+                          dest.destroy();
+                          readStream.destroy();
+                          processNext(error);
+                        })
+                        .on("end", function () {
+                          processNext();
+                        })
+                        .pipe(dest);
                     }
                   );
                 });
               }
             });
             zipfile.on("close", resolve);
-            zipfile.on("error", reject);
-          } catch (err) {
-            reject(err);
+            zipfile.on("error", (error) => {
+              zipfile.close();
+              reject(error);
+            });
+          } catch (zErr) {
+            if (zipfile) {
+              zipfile.close();
+            }
+            reject(zErr);
           }
         }
       );

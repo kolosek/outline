@@ -1,6 +1,5 @@
 import { observer } from "mobx-react";
 import { PlusIcon } from "outline-icons";
-import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import Button from "~/components/Button";
@@ -19,12 +18,7 @@ function NewDocumentMenu() {
   }
 
   return (
-    <Tooltip
-      content={t("New document")}
-      shortcut="n"
-      delay={500}
-      placement="bottom"
-    >
+    <Tooltip content={t("New document")} shortcut="n" placement="bottom">
       <Button as={Link} to={newDocumentPath()} icon={<PlusIcon />}>
         {t("New doc")}
       </Button>

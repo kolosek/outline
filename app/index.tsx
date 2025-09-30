@@ -1,9 +1,9 @@
-// eslint-disable-next-line import/no-unresolved
+// oxlint-disable-next-line import/no-unresolved
 import "vite/modulepreload-polyfill";
 import { LazyMotion } from "framer-motion";
 import { KBarProvider } from "kbar";
 import { Provider } from "mobx-react";
-import * as React from "react";
+import { StrictMode } from "react";
 import { render } from "react-dom";
 import { HelmetProvider } from "react-helmet-async";
 import { Router } from "react-router-dom";
@@ -25,18 +25,13 @@ import Logger from "./utils/Logger";
 import { PluginManager } from "./utils/PluginManager";
 import history from "./utils/history";
 import { initSentry } from "./utils/sentry";
+import { ActionContextProvider } from "./hooks/useActionContext";
 
 // Load plugins as soon as possible
 void PluginManager.loadPlugins();
 
 initI18n(env.DEFAULT_LANGUAGE);
 const element = window.document.getElementById("root");
-
-history.listen(() => {
-  requestAnimationFrame(() =>
-    window.dispatchEvent(new Event("location-changed"))
-  );
-});
 
 if (env.SENTRY_DSN) {
   initSentry(history);
@@ -54,35 +49,37 @@ const commandBarOptions = {
 
 if (element) {
   const App = () => (
-    <React.StrictMode>
+    <StrictMode>
       <HelmetProvider>
         <Provider {...stores}>
           <Analytics>
-            <Theme>
-              <ErrorBoundary showTitle>
-                <KBarProvider actions={[]} options={commandBarOptions}>
-                  <LazyPolyfill>
-                    <LazyMotion features={loadFeatures}>
-                      <Router history={history}>
-                        <PageScroll>
-                          <PageTheme />
-                          <ScrollToTop>
-                            <Routes />
-                          </ScrollToTop>
-                          <Toasts />
-                          <Dialogs />
-                          <Desktop />
-                        </PageScroll>
-                      </Router>
-                    </LazyMotion>
-                  </LazyPolyfill>
-                </KBarProvider>
-              </ErrorBoundary>
-            </Theme>
+            <Router history={history}>
+              <Theme>
+                <ErrorBoundary showTitle>
+                  <KBarProvider actions={[]} options={commandBarOptions}>
+                    <LazyPolyfill>
+                      <LazyMotion features={loadFeatures}>
+                        <ActionContextProvider>
+                          <PageScroll>
+                            <PageTheme />
+                            <ScrollToTop>
+                              <Routes />
+                            </ScrollToTop>
+                            <Toasts />
+                            <Dialogs />
+                            <Desktop />
+                          </PageScroll>
+                        </ActionContextProvider>
+                      </LazyMotion>
+                    </LazyPolyfill>
+                  </KBarProvider>
+                </ErrorBoundary>
+              </Theme>
+            </Router>
           </Analytics>
         </Provider>
       </HelmetProvider>
-    </React.StrictMode>
+    </StrictMode>
   );
 
   render(<App />, element);

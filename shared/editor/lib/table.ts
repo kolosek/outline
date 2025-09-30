@@ -1,5 +1,6 @@
 import { Attrs, Node } from "prosemirror-model";
 import { MutableAttrs } from "prosemirror-tables";
+import { isBrowser } from "../../utils/browser";
 import { TableLayout } from "../types";
 
 export interface TableAttrs {
@@ -27,9 +28,10 @@ export function getCellAttrs(dom: HTMLElement | string): Attrs {
   const widthAttr = dom.getAttribute("data-colwidth");
   const widths =
     widthAttr && /^\d+(,\d+)*$/.test(widthAttr)
-      ? widthAttr.split(",").map((s) => Number(s))
+      ? widthAttr.split(",").map(Number)
       : null;
   const colspan = Number(dom.getAttribute("colspan") || 1);
+
   return {
     colspan,
     rowspan: Number(dom.getAttribute("rowspan") || 1),
@@ -38,8 +40,8 @@ export function getCellAttrs(dom: HTMLElement | string): Attrs {
       dom.style.textAlign === "center"
         ? "center"
         : dom.style.textAlign === "right"
-        ? "right"
-        : null,
+          ? "right"
+          : null,
   } satisfies CellAttrs;
 }
 
@@ -57,11 +59,18 @@ export function setCellAttrs(node: Node): Attrs {
   if (node.attrs.rowspan !== 1) {
     attrs.rowspan = node.attrs.rowspan;
   }
-  if (node.attrs.colwidth) {
-    attrs["data-colwidth"] = node.attrs.colwidth.join(",");
-  }
   if (node.attrs.alignment) {
-    attrs.style = `text-align: ${node.attrs.alignment}`;
+    attrs.style = `text-align: ${node.attrs.alignment};`;
   }
+  if (node.attrs.colwidth) {
+    if (isBrowser) {
+      attrs["data-colwidth"] = node.attrs.colwidth.map(parseInt).join(",");
+    } else {
+      attrs.style =
+        (attrs.style ?? "") +
+        `min-width: ${parseInt(node.attrs.colwidth[0])}px;`;
+    }
+  }
+
   return attrs;
 }

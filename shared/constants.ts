@@ -15,20 +15,30 @@ export const Pagination = {
   sidebarLimit: 10,
 };
 
+export const CSRF = {
+  cookieName: "csrfToken",
+  headerName: "x-csrf-token",
+  fieldName: "_csrf",
+};
+
 export const TeamPreferenceDefaults: TeamPreferences = {
   [TeamPreference.SeamlessEdit]: true,
   [TeamPreference.ViewersCanExport]: true,
   [TeamPreference.MembersCanInvite]: false,
   [TeamPreference.MembersCanCreateApiKey]: true,
   [TeamPreference.MembersCanDeleteAccount]: true,
+  [TeamPreference.PreviewsInEmails]: true,
   [TeamPreference.PublicBranding]: false,
   [TeamPreference.Commenting]: true,
   [TeamPreference.CustomTheme]: undefined,
   [TeamPreference.TocPosition]: TOCPosition.Left,
+  [TeamPreference.PreventDocumentEmbedding]: false,
 };
 
 export const UserPreferenceDefaults: UserPreferences = {
   [UserPreference.RememberLastPath]: true,
   [UserPreference.UseCursorPointer]: true,
   [UserPreference.CodeBlockLineNumers]: true,
+  [UserPreference.SortCommentsByOrderInDocument]: true,
+  [UserPreference.EnableSmartText]: true,
 };
